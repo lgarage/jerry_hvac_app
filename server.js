@@ -130,6 +130,53 @@ Return ONLY valid JSON array, no additional text.`;
   }
 }
 
+// In-memory storage for submitted repairs
+let submittedRepairs = [];
+
+app.post('/api/submit-repairs', (req, res) => {
+  try {
+    const { repairs } = req.body;
+
+    if (!repairs || !Array.isArray(repairs)) {
+      return res.status(400).json({ error: 'Invalid repairs data' });
+    }
+
+    // Store repairs with timestamp
+    const submission = {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      repairs: repairs,
+      count: repairs.length
+    };
+
+    submittedRepairs.push(submission);
+
+    console.log(`\n=== REPAIR SUBMISSION ===`);
+    console.log(`Time: ${submission.timestamp}`);
+    console.log(`Total Repairs: ${submission.count}`);
+    console.log(JSON.stringify(repairs, null, 2));
+    console.log(`========================\n`);
+
+    res.json({
+      success: true,
+      submissionId: submission.id,
+      message: `Successfully submitted ${repairs.length} repair(s)`
+    });
+
+  } catch (error) {
+    console.error('Error submitting repairs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Optional: Get all submitted repairs
+app.get('/api/submissions', (req, res) => {
+  res.json({
+    total: submittedRepairs.length,
+    submissions: submittedRepairs
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Dave Mode server running on http://localhost:${PORT}`);
   console.log(`Configured with OpenAI: ${!!process.env.OPENAI_API_KEY}`);

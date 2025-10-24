@@ -1,6 +1,7 @@
 let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
+let currentRepairs = []; // In-memory storage for repairs
 
 const jobNotesTextarea = document.getElementById('jobNotes');
 const recordBtn = document.getElementById('recordBtn');
@@ -242,13 +243,10 @@ function displayResults(result) {
     transcriptionSection.classList.add('hidden');
   }
 
-  repairGrid.innerHTML = '';
-
   if (result.repairs && result.repairs.length > 0) {
-    result.repairs.forEach((repair, index) => {
-      const repairCard = createRepairCard(repair, index + 1);
-      repairGrid.appendChild(repairCard);
-    });
+    // Store repairs in memory
+    currentRepairs = result.repairs;
+    renderRepairs();
 
     resultsSection.classList.add('visible');
 
@@ -260,18 +258,67 @@ function displayResults(result) {
   }
 }
 
+function renderRepairs() {
+  repairGrid.innerHTML = '';
+
+  currentRepairs.forEach((repair, index) => {
+    const repairCard = createRepairCard(repair, index);
+    repairGrid.appendChild(repairCard);
+  });
+
+  // Add "Add New Repair" button at the end
+  const addButton = document.createElement('button');
+  addButton.className = 'btn-primary';
+  addButton.style.marginTop = '16px';
+  addButton.innerHTML = '<span>+ Add New Repair</span>';
+  addButton.addEventListener('click', () => addNewRepair());
+  repairGrid.appendChild(addButton);
+
+  // Add or update "Submit Final Repairs" button
+  let submitFinalBtn = document.getElementById('submitFinalBtn');
+  if (!submitFinalBtn) {
+    submitFinalBtn = document.createElement('button');
+    submitFinalBtn.id = 'submitFinalBtn';
+    submitFinalBtn.className = 'btn-secondary';
+    submitFinalBtn.style.marginTop = '16px';
+    submitFinalBtn.style.width = '100%';
+    submitFinalBtn.innerHTML = '<span>✓ Submit Final Repairs</span>';
+    submitFinalBtn.addEventListener('click', submitFinalRepairs);
+    repairGrid.appendChild(submitFinalBtn);
+  }
+}
+
 function createRepairCard(repair, index) {
   const card = document.createElement('div');
   card.className = 'repair-card';
+  card.dataset.index = index;
 
   const header = document.createElement('div');
   header.className = 'repair-header';
 
   const badge = document.createElement('div');
   badge.className = 'equipment-badge';
-  badge.textContent = repair.equipment || `Item ${index}`;
+  badge.textContent = repair.equipment || `Item ${index + 1}`;
+
+  const buttonGroup = document.createElement('div');
+  buttonGroup.style.display = 'flex';
+  buttonGroup.style.gap = '8px';
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'btn-edit';
+  editBtn.innerHTML = '✏️ Edit';
+  editBtn.addEventListener('click', () => editRepair(index));
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'btn-delete';
+  deleteBtn.innerHTML = '🗑️ Delete';
+  deleteBtn.addEventListener('click', () => deleteRepair(index));
+
+  buttonGroup.appendChild(editBtn);
+  buttonGroup.appendChild(deleteBtn);
 
   header.appendChild(badge);
+  header.appendChild(buttonGroup);
   card.appendChild(header);
 
   const problem = document.createElement('div');
@@ -331,4 +378,107 @@ function createRepairCard(repair, index) {
   }
 
   return card;
+}
+
+function editRepair(index) {
+  const repair = currentRepairs[index];
+
+  const equipment = prompt('Equipment:', repair.equipment || '');
+  if (equipment === null) return; // User cancelled
+
+  const problem = prompt('Problem:', repair.problem || '');
+  if (problem === null) return;
+
+  const partsStr = prompt('Parts (comma-separated):', (repair.parts || []).join(', '));
+  if (partsStr === null) return;
+
+  const actionsStr = prompt('Actions (comma-separated):', (repair.actions || []).join(', '));
+  if (actionsStr === null) return;
+
+  const notes = prompt('Notes:', repair.notes || '');
+  if (notes === null) return;
+
+  // Update the repair
+  currentRepairs[index] = {
+    equipment: equipment.trim(),
+    problem: problem.trim(),
+    parts: partsStr.split(',').map(p => p.trim()).filter(p => p),
+    actions: actionsStr.split(',').map(a => a.trim()).filter(a => a),
+    notes: notes.trim()
+  };
+
+  renderRepairs();
+  showStatus('Repair updated successfully!', 'success');
+}
+
+function deleteRepair(index) {
+  if (confirm('Are you sure you want to delete this repair?')) {
+    currentRepairs.splice(index, 1);
+    renderRepairs();
+    showStatus('Repair deleted.', 'info');
+
+    if (currentRepairs.length === 0) {
+      resultsSection.classList.remove('visible');
+    }
+  }
+}
+
+function addNewRepair() {
+  const equipment = prompt('Equipment:', 'RTU-1');
+  if (!equipment) return;
+
+  const problem = prompt('Problem:', '');
+  if (!problem) return;
+
+  const partsStr = prompt('Parts (comma-separated):', '');
+  const actionsStr = prompt('Actions (comma-separated):', '');
+  const notes = prompt('Notes (optional):', '');
+
+  const newRepair = {
+    equipment: equipment.trim(),
+    problem: problem.trim(),
+    parts: partsStr.split(',').map(p => p.trim()).filter(p => p),
+    actions: actionsStr.split(',').map(a => a.trim()).filter(a => a),
+    notes: notes.trim()
+  };
+
+  currentRepairs.push(newRepair);
+  renderRepairs();
+  showStatus('New repair added!', 'success');
+}
+
+async function submitFinalRepairs() {
+  if (currentRepairs.length === 0) {
+    showStatus('No repairs to submit.', 'error');
+    return;
+  }
+
+  try {
+    showStatus('Submitting final repairs...', 'info');
+
+    const response = await fetch('/api/submit-repairs', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ repairs: currentRepairs })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to submit repairs');
+    }
+
+    const result = await response.json();
+
+    showStatus(`Successfully submitted ${currentRepairs.length} repair(s)!`, 'success');
+    console.log('Submitted repairs:', result);
+
+    // Optionally clear the form
+    // currentRepairs = [];
+    // renderRepairs();
+
+  } catch (error) {
+    console.error('Error submitting repairs:', error);
+    showStatus(`Error: ${error.message}`, 'error');
+  }
 }
