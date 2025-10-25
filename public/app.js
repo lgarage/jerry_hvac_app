@@ -652,7 +652,10 @@ function displayPartsResults(parts) {
 }
 
 function addPartToRepair(part) {
-  if (currentRepairIndex === null) return;
+  if (currentRepairIndex === null) {
+    showStatus('Please select a repair first by clicking "🔍 Parts" on a repair card.', 'error');
+    return;
+  }
 
   const repair = currentRepairs[currentRepairIndex];
 
