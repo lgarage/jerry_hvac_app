@@ -487,36 +487,82 @@ async function autoMatchParts(repairs) {
     for (const partString of repair.parts) {
       try {
         // Extract quantity from part string (e.g., "4 lbs R410A" → qty: 4, search: "R410A refrigerant")
-        const { quantity, searchTerm } = extractQuantityAndTerm(partString);
+        const { quantity, searchTerm, refrigerantCode } = extractQuantityAndTerm(partString);
 
-        // Search parts database using semantic search
-        const embeddingResponse = await openai.embeddings.create({
-          model: 'text-embedding-3-small',
-          input: searchTerm,
-        });
+        let matchedPart = null;
 
-        const queryEmbedding = embeddingResponse.data[0].embedding;
-        const embeddingStr = JSON.stringify(queryEmbedding);
+        // CRITICAL SAFETY CHECK: For refrigerants, require EXACT code match
+        // Never allow cross-refrigerant matching (R-22 ≠ R-410A)
+        if (refrigerantCode) {
+          console.log(`  🔒 Refrigerant detected: ${refrigerantCode} - using exact match only`);
 
-        // Find best matching part
-        const results = await sql`
-          SELECT
-            id,
-            part_number,
-            name,
-            description,
-            category,
-            type,
-            price,
-            1 - (embedding <=> ${embeddingStr}::vector(1536)) AS similarity
-          FROM parts
-          ORDER BY embedding <=> ${embeddingStr}::vector(1536)
-          LIMIT 1
-        `;
+          // Try exact match first (handles R-410A, R410A, R-22, etc.)
+          const exactMatch = await sql`
+            SELECT
+              id,
+              part_number,
+              name,
+              description,
+              category,
+              type,
+              price,
+              1.0 AS similarity
+            FROM parts
+            WHERE (
+              name ILIKE ${`%${refrigerantCode}%`} OR
+              part_number ILIKE ${`%${refrigerantCode}%`} OR
+              description ILIKE ${`%${refrigerantCode}%`}
+            )
+            AND (
+              name ILIKE '%refrigerant%' OR
+              category = 'refrigerant'
+            )
+            LIMIT 1
+          `;
 
-        if (results.length > 0 && results[0].similarity > 0.6) {
-          const matchedPart = results[0];
+          if (exactMatch.length > 0) {
+            matchedPart = exactMatch[0];
+            console.log(`  ✓ "${partString}" → ${matchedPart.name} (qty: ${quantity}, EXACT refrigerant match)`);
+          } else {
+            console.log(`  ✗ "${partString}" → No exact refrigerant match for ${refrigerantCode}`);
+          }
 
+        } else {
+          // Non-refrigerant parts: use semantic search
+          const embeddingResponse = await openai.embeddings.create({
+            model: 'text-embedding-3-small',
+            input: searchTerm,
+          });
+
+          const queryEmbedding = embeddingResponse.data[0].embedding;
+          const embeddingStr = JSON.stringify(queryEmbedding);
+
+          // Find best matching part
+          const results = await sql`
+            SELECT
+              id,
+              part_number,
+              name,
+              description,
+              category,
+              type,
+              price,
+              1 - (embedding <=> ${embeddingStr}::vector(1536)) AS similarity
+            FROM parts
+            ORDER BY embedding <=> ${embeddingStr}::vector(1536)
+            LIMIT 1
+          `;
+
+          if (results.length > 0 && results[0].similarity > 0.6) {
+            matchedPart = results[0];
+            console.log(`  ✓ "${partString}" → ${matchedPart.name} (qty: ${quantity}, ${(matchedPart.similarity * 100).toFixed(0)}% match)`);
+          } else {
+            console.log(`  ✗ "${partString}" → No match found (best: ${results[0] ? (results[0].similarity * 100).toFixed(0) : 0}%)`);
+          }
+        }
+
+        // Add matched part to repair
+        if (matchedPart) {
           repair.selectedParts.push({
             part_number: matchedPart.part_number,
             name: matchedPart.name,
@@ -527,10 +573,6 @@ async function autoMatchParts(repairs) {
             original_text: partString,
             match_confidence: parseFloat(matchedPart.similarity)
           });
-
-          console.log(`  ✓ "${partString}" → ${matchedPart.name} (qty: ${quantity}, ${(matchedPart.similarity * 100).toFixed(0)}% match)`);
-        } else {
-          console.log(`  ✗ "${partString}" → No match found (best: ${results[0] ? (results[0].similarity * 100).toFixed(0) : 0}%)`);
         }
 
       } catch (error) {
@@ -547,6 +589,7 @@ async function autoMatchParts(repairs) {
 function extractQuantityAndTerm(partString) {
   let quantity = 1;
   let searchTerm = partString.toLowerCase();
+  let refrigerantCode = null;
 
   // Match patterns like "4 lbs", "5 pounds", "2x", "3 units", etc.
   const quantityPatterns = [
@@ -573,19 +616,27 @@ function extractQuantityAndTerm(partString) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Enhance search term for better matching
-  // If it looks like a refrigerant code, add "refrigerant" to improve semantic matching
-  if (/R-?\d{2,3}[A-Z]?/i.test(searchTerm)) {
-    searchTerm = searchTerm + ' refrigerant';
-    console.log(`  🔍 Enhanced refrigerant search: "${searchTerm}"`);
+  // CRITICAL: Detect refrigerant codes for exact matching
+  // Matches: R-410A, R410A, R-22, R22, R-134A, etc.
+  const refrigerantMatch = searchTerm.match(/R-?\d{2,3}[A-Z]?/i);
+  if (refrigerantMatch) {
+    refrigerantCode = refrigerantMatch[0].toUpperCase();
+    // Normalize format: ensure hyphen (R410A → R-410A, R22 → R-22)
+    if (!refrigerantCode.includes('-')) {
+      refrigerantCode = refrigerantCode.replace(/^R(\d)/, 'R-$1');
+    }
+    console.log(`  🔒 Refrigerant code detected: ${refrigerantCode}`);
   }
 
-  // If it looks like a voltage spec (24V, 120V, etc.), add context
-  if (/\d+V\b/i.test(searchTerm) && !/contactor|transformer|relay/i.test(searchTerm)) {
-    // Already has voltage, no need to enhance
+  // Enhance search term for non-refrigerant parts
+  if (!refrigerantCode) {
+    // If it looks like a voltage spec (24V, 120V, etc.), add context
+    if (/\d+V\b/i.test(searchTerm) && !/contactor|transformer|relay/i.test(searchTerm)) {
+      // Already has voltage, no need to enhance
+    }
   }
 
-  return { quantity, searchTerm };
+  return { quantity, searchTerm, refrigerantCode };
 }
 
 // In-memory storage for submitted repairs
