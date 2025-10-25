@@ -421,6 +421,101 @@ async function submitToBackend(audio, text) {
 }
 
 function displayResults(result) {
+  // Handle voice commands (add part/term) differently
+  if (result.command_type === 'add_part' || result.command_type === 'add_term') {
+    const commandName = result.command_type === 'add_part' ? 'Part' : 'Term';
+
+    if (result.success) {
+      showStatus(`✅ ${result.message}`, 'success');
+
+      // Show confirmation in transcription area
+      transcriptionText.textContent = `Voice Command: ${result.raw_transcription}`;
+      transcriptionSection.classList.remove('hidden');
+
+      // Show what was added as a "repair" card for visual feedback
+      const successCard = document.createElement('div');
+      successCard.className = 'repair-card';
+      successCard.style.borderColor = '#10b981';
+      successCard.innerHTML = `
+        <div class="equipment-badge" style="background: #10b981;">✅ ${commandName} Added</div>
+        <div class="problem" style="margin-top: 12px;">${result.message}</div>
+        <div class="section">
+          <div class="section-title">What You Said</div>
+          <p style="color: #6b7280; font-style: italic;">"${result.raw_transcription}"</p>
+        </div>
+        ${result.part ? `
+          <div class="section">
+            <div class="section-title">Part Details</div>
+            <p><strong>Part Number:</strong> ${result.part.part_number}</p>
+            <p><strong>Category:</strong> ${result.part.category}</p>
+            <p><strong>Price:</strong> $${parseFloat(result.part.price).toFixed(2)}</p>
+          </div>
+        ` : ''}
+        ${result.term ? `
+          <div class="section">
+            <div class="section-title">Term Details</div>
+            <p><strong>Standard Term:</strong> ${result.term.standard_term}</p>
+            <p><strong>Category:</strong> ${result.term.category}</p>
+            <p><strong>Variations:</strong> ${result.term.variations.length} variation(s)</p>
+          </div>
+        ` : ''}
+        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb;">
+          <button class="btn-primary" onclick="window.location.href='${result.command_type === 'add_part' ? '/manage-parts.html' : '/admin.html'}'" style="background: #10b981;">
+            View in ${result.command_type === 'add_part' ? 'Parts' : 'Terms'} Manager
+          </button>
+        </div>
+      `;
+
+      repairGrid.innerHTML = '';
+      repairGrid.appendChild(successCard);
+      resultsSection.classList.add('visible');
+
+      // Clear the input
+      jobNotesTextarea.value = '';
+
+    } else {
+      showStatus(`❌ ${result.message}`, 'error');
+
+      // Show error details
+      transcriptionText.textContent = `Failed Command: ${result.raw_transcription}`;
+      transcriptionSection.classList.remove('hidden');
+
+      const errorCard = document.createElement('div');
+      errorCard.className = 'repair-card';
+      errorCard.style.borderColor = '#ef4444';
+      errorCard.innerHTML = `
+        <div class="equipment-badge" style="background: #ef4444;">❌ ${commandName} Failed</div>
+        <div class="problem" style="margin-top: 12px; color: #ef4444;">${result.message}</div>
+        <div class="section">
+          <div class="section-title">What You Said</div>
+          <p style="color: #6b7280; font-style: italic;">"${result.raw_transcription}"</p>
+        </div>
+        <div class="section">
+          <div class="section-title">Tips for Voice Commands</div>
+          <ul style="margin-left: 20px; color: #6b7280; font-size: 0.9rem;">
+            ${result.command_type === 'add_part' ? `
+              <li>Say "Add new part" followed by the part name</li>
+              <li>Include the price: "costs $45" or "about thirty dollars"</li>
+              <li>Optional: Mention category (electrical, refrigerant, etc.)</li>
+              <li>Example: "Add new part, Honeywell damper actuator, $45, electrical"</li>
+            ` : `
+              <li>Say "Add new term" followed by the term name</li>
+              <li>Include the category (refrigerant, equipment, etc.)</li>
+              <li>Optional: List variations: "variations are R22, R 22"</li>
+              <li>Example: "Add new term, R-22, refrigerant, also called twenty-two"</li>
+            `}
+          </ul>
+        </div>
+      `;
+
+      repairGrid.innerHTML = '';
+      repairGrid.appendChild(errorCard);
+      resultsSection.classList.add('visible');
+    }
+
+    return; // Exit early, don't process as normal repair
+  }
+
   // Store both raw and normalized transcription for context
   if (result.transcription && result.transcription !== jobNotesTextarea.value.trim()) {
     const hasRawText = result.raw_transcription && result.raw_transcription !== result.transcription;

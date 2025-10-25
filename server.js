@@ -44,6 +44,133 @@ app.post('/api/parse', async (req, res) => {
       return res.status(400).json({ error: 'No input provided' });
     }
 
+    // STEP 1: Check if this is a voice command (add part/term)
+    const voiceCommand = await detectVoiceCommand(rawTranscription);
+
+    if (voiceCommand && voiceCommand.command_type === 'add_part') {
+      // Handle "add new part" command
+      const partDetails = await parsePartFromVoice(rawTranscription);
+
+      if (!partDetails.success) {
+        return res.json({
+          command_type: 'add_part',
+          success: false,
+          message: `I couldn't extract all the part details. Missing: ${partDetails.missing_fields?.join(', ') || 'unknown'}`,
+          raw_transcription: rawTranscription
+        });
+      }
+
+      // Auto-generate part number from name
+      const partNumber = partDetails.name
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '-')
+        .substring(0, 20);
+
+      // Add part to database
+      try {
+        // Generate embedding
+        const embeddingText = [partDetails.name, partDetails.description || '', partDetails.category].join(' ');
+        const embeddingResponse = await openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: embeddingText,
+        });
+        const embedding = embeddingResponse.data[0].embedding;
+        const embeddingStr = JSON.stringify(embedding);
+
+        // Insert into database
+        const result = await sql`
+          INSERT INTO parts (
+            part_number, name, description, category, type, price,
+            thumbnail_url, common_uses, embedding
+          ) VALUES (
+            ${partNumber}, ${partDetails.name}, ${partDetails.description || rawTranscription},
+            ${partDetails.category || 'Other'}, ${partDetails.type || 'inventory'},
+            ${parseFloat(partDetails.price)},
+            ${'https://via.placeholder.com/150?text=' + encodeURIComponent(partDetails.name.substring(0, 10))},
+            ${[]}, ${embeddingStr}::vector(1536)
+          )
+          RETURNING id, part_number, name, category, type, price
+        `;
+
+        console.log(`✅ Added new part via voice: ${partDetails.name}`);
+
+        return res.json({
+          command_type: 'add_part',
+          success: true,
+          message: `Added "${partDetails.name}" to parts catalog at $${parseFloat(partDetails.price).toFixed(2)}`,
+          part: result[0],
+          raw_transcription: rawTranscription
+        });
+
+      } catch (dbError) {
+        console.error('Database error adding part:', dbError);
+        return res.json({
+          command_type: 'add_part',
+          success: false,
+          message: `Failed to add part: ${dbError.message}`,
+          raw_transcription: rawTranscription
+        });
+      }
+    }
+
+    if (voiceCommand && voiceCommand.command_type === 'add_term') {
+      // Handle "add new term" command
+      const termDetails = await parseTermFromVoice(rawTranscription);
+
+      if (!termDetails.success) {
+        return res.json({
+          command_type: 'add_term',
+          success: false,
+          message: `I couldn't extract all the term details. Missing: ${termDetails.missing_fields?.join(', ') || 'unknown'}`,
+          raw_transcription: rawTranscription
+        });
+      }
+
+      // Add term to database
+      try {
+        // Generate embedding for semantic search
+        const embeddingText = [termDetails.standard_term, termDetails.description || '', ...termDetails.variations].join(' ');
+        const embeddingResponse = await openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: embeddingText,
+        });
+        const embedding = embeddingResponse.data[0].embedding;
+        const embeddingStr = JSON.stringify(embedding);
+
+        // Insert into database
+        const result = await sql`
+          INSERT INTO terminology (
+            standard_term, category, variations, description, embedding
+          ) VALUES (
+            ${termDetails.standard_term}, ${termDetails.category || 'other'},
+            ${termDetails.variations}, ${termDetails.description || ''},
+            ${embeddingStr}::vector(1536)
+          )
+          RETURNING id, standard_term, category, variations
+        `;
+
+        console.log(`✅ Added new term via voice: ${termDetails.standard_term}`);
+
+        return res.json({
+          command_type: 'add_term',
+          success: true,
+          message: `Added "${termDetails.standard_term}" to terminology (${termDetails.variations.length} variations)`,
+          term: result[0],
+          raw_transcription: rawTranscription
+        });
+
+      } catch (dbError) {
+        console.error('Database error adding term:', dbError);
+        return res.json({
+          command_type: 'add_term',
+          success: false,
+          message: `Failed to add term: ${dbError.message}`,
+          raw_transcription: rawTranscription
+        });
+      }
+    }
+
+    // STEP 2: Normal repair documentation flow (if not a command)
     // Pass both raw and normalized text to GPT-4 for better context
     const parsedRepairs = await parseRepairs(transcription, rawTranscription);
 
@@ -234,6 +361,202 @@ Be strict - when in doubt, reject it. Only accept clean, standalone technical te
       is_technical_term: false,
       reason: 'Agent evaluation failed, rejecting for safety'
     }));
+  }
+}
+
+// Agent 4: Voice Command Detector
+// Detects management commands like "add new part" or "add new term"
+async function detectVoiceCommand(text) {
+  if (!text) return null;
+
+  try {
+    console.log('\n🤖 Agent 4: Detecting voice commands...');
+
+    const systemPrompt = `You are a voice command detection agent for an HVAC management system.
+
+Detect if the user is trying to ADD a new part or term to the system, or if they're documenting a repair.
+
+PART ADDITION COMMANDS - Look for phrases like:
+- "Add new part..."
+- "Add a part called..."
+- "Add to parts catalog..."
+- "Create new part..."
+Example: "Add new part, Honeywell damper actuator, $45, electrical, inventory"
+
+TERM ADDITION COMMANDS - Look for phrases like:
+- "Add new term..."
+- "Add to glossary..."
+- "Add terminology..."
+- "Create new term..."
+Example: "Add new term, R-22, refrigerant, variations are R22, R 22, twenty-two"
+
+REPAIR DOCUMENTATION - Everything else
+Example: "RTU-1 needs a new damper actuator and 4 pounds of R-410A"
+
+Return JSON:
+{
+  "command_type": "add_part" | "add_term" | "repair_documentation",
+  "confidence": 0-100,
+  "reason": "brief explanation"
+}
+
+Be strict: only detect "add_part" or "add_term" if there's explicit language about ADDING/CREATING. Otherwise assume it's repair documentation.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Analyze this input: "${text}"` }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Agent 4 raw response:', responseText);
+
+    const result = JSON.parse(responseText);
+
+    if (result.command_type === 'add_part' || result.command_type === 'add_term') {
+      console.log(`  ✅ Detected command: ${result.command_type} (${result.confidence}% confidence)`);
+      console.log(`     Reason: ${result.reason}`);
+      return result;
+    } else {
+      console.log(`  ℹ️  Normal repair documentation detected`);
+      return null;
+    }
+
+  } catch (error) {
+    console.error('❌ Agent 4 command detection failed:', error.message);
+    // Fallback: assume repair documentation
+    return null;
+  }
+}
+
+// Parse Part from Voice Command
+async function parsePartFromVoice(text) {
+  try {
+    console.log('\n🔧 Parsing part details from voice...');
+
+    const systemPrompt = `You are a part information extraction agent.
+
+Extract part details from natural speech. Be flexible with how information is provided.
+
+Look for:
+- Part name (REQUIRED): The main name/description of the part
+- Price (REQUIRED): Dollar amount, can be approximate ("about $45", "$35", "forty-five dollars")
+- Category: electrical, refrigerant, controls, filters, supplies, other
+- Type: "consumable" or "inventory" (default to "inventory" if not specified)
+
+Examples:
+"Add new part, Honeywell damper actuator, $45, electrical"
+→ name: "Honeywell Damper Actuator", price: 45.00, category: "Electrical", type: "inventory"
+
+"Add Trane compressor contactor, costs about $35, it's a consumable electrical part"
+→ name: "Trane Compressor Contactor", price: 35.00, category: "Electrical", type: "consumable"
+
+"Create part called R-22 refrigerant, $85 per pound"
+→ name: "R-22 Refrigerant (per lb)", price: 85.00, category: "Refrigerant", type: "consumable"
+
+Return JSON:
+{
+  "name": "cleaned part name",
+  "price": numeric_value,
+  "category": "category_name",
+  "type": "consumable" or "inventory",
+  "description": "full utterance as description",
+  "success": true/false,
+  "missing_fields": ["field1", "field2"] if any required fields missing
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Extract part details: "${text}"` }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Part extraction response:', responseText);
+
+    const result = JSON.parse(responseText);
+    return result;
+
+  } catch (error) {
+    console.error('❌ Part parsing failed:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// Parse Term from Voice Command
+async function parseTermFromVoice(text) {
+  try {
+    console.log('\n📚 Parsing term details from voice...');
+
+    const systemPrompt = `You are a terminology extraction agent for HVAC terminology.
+
+Extract term details from natural speech.
+
+Look for:
+- Standard term (REQUIRED): The correct way to write the term
+- Category (REQUIRED): refrigerant, equipment, voltage, measurement, part_type, action, brand, other
+- Variations: Different ways it might be said/spelled (if mentioned)
+- Description: Any context provided
+
+Examples:
+"Add new term, R-22, refrigerant, variations are R22, R 22, twenty-two"
+→ standard_term: "R-22", category: "refrigerant", variations: ["R22", "R 22", "twenty-two"]
+
+"Add to glossary RTU, equipment type, also called roof top unit"
+→ standard_term: "RTU", category: "equipment", variations: ["roof top unit", "rooftop unit"]
+
+"Create term damper actuator, it's a part type, sometimes called damper motor"
+→ standard_term: "damper actuator", category: "part_type", variations: ["damper motor"]
+
+Return JSON:
+{
+  "standard_term": "the correct term",
+  "category": "category_name",
+  "variations": ["variation1", "variation2"],
+  "description": "any description provided",
+  "success": true/false,
+  "missing_fields": ["field1"] if required fields missing
+}
+
+If no variations are explicitly mentioned, use the standard_term as the only variation.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Extract term details: "${text}"` }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Term extraction response:', responseText);
+
+    const result = JSON.parse(responseText);
+
+    // Ensure variations array includes the standard term itself
+    if (result.success && result.variations) {
+      if (!result.variations.includes(result.standard_term)) {
+        result.variations.unshift(result.standard_term);
+      }
+    } else if (result.success) {
+      result.variations = [result.standard_term];
+    }
+
+    return result;
+
+  } catch (error) {
+    console.error('❌ Term parsing failed:', error.message);
+    return { success: false, error: error.message };
   }
 }
 
