@@ -421,6 +421,11 @@ function displayResults(result) {
   if (result.suggestions && result.suggestions.length > 0) {
     showTerminologySuggestions(result.suggestions);
   }
+
+  // Show new term suggestions (add to glossary)
+  if (result.newTerms && result.newTerms.length > 0) {
+    showNewTermSuggestions(result.newTerms);
+  }
 }
 
 function showTerminologySuggestions(suggestions) {
@@ -696,6 +701,247 @@ async function confirmTerminology(original, corrected, category) {
   } catch (error) {
     console.error('Error confirming terminology:', error);
     showStatus(`Error saving terminology: ${error.message}`, 'error');
+  }
+}
+
+function showNewTermSuggestions(newTerms) {
+  // Remove any existing new term UI
+  const existingNewTerms = document.getElementById('newTermSuggestions');
+  if (existingNewTerms) {
+    existingNewTerms.remove();
+  }
+
+  const container = document.createElement('div');
+  container.id = 'newTermSuggestions';
+  container.style.cssText = `
+    background: #f0fdf4;
+    border: 2px solid #10b981;
+    border-radius: 12px;
+    padding: 16px;
+    margin: 16px 0;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+  `;
+
+  const title = document.createElement('h3');
+  title.textContent = '💡 Add to Glossary?';
+  title.style.cssText = `
+    color: #065f46;
+    margin: 0 0 12px 0;
+    font-size: 1.1rem;
+  `;
+  container.appendChild(title);
+
+  const description = document.createElement('p');
+  description.textContent = 'I noticed these technical terms that aren\'t in the glossary yet:';
+  description.style.cssText = `
+    color: #065f46;
+    margin: 0 0 12px 0;
+    font-size: 0.9rem;
+  `;
+  container.appendChild(description);
+
+  const newTermRecorders = {};
+
+  newTerms.forEach((termInfo, index) => {
+    const termItem = document.createElement('div');
+    termItem.style.cssText = `
+      background: white;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      border-left: 4px solid #10b981;
+    `;
+
+    termItem.innerHTML = `
+      <div style="margin-bottom: 8px;">
+        <strong style="color: #1f2937;">Detected:</strong> "<span style="color: #10b981; font-weight: 600;">${termInfo.phrase}</span>"
+        ${termInfo.bestMatch ? `<br><small style="color: #6b7280;">Closest match: ${termInfo.bestMatch} (${Math.round(termInfo.similarity * 100)}%)</small>` : ''}
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <button class="btn-add-term-yes" data-index="${index}" style="background: #10b981; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.2s; user-select: none;">
+          🎤 Hold to confirm
+        </button>
+        <button class="btn-add-term-no" data-index="${index}" style="background: #6b7280; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.95rem;">
+          ✗ Skip
+        </button>
+        <div class="new-term-recording-status" data-index="${index}" style="display: none; color: #10b981; font-weight: 600; font-size: 0.9rem;">
+          🔴 Recording... <span class="timer">0:00</span>
+        </div>
+      </div>
+    `;
+
+    container.appendChild(termItem);
+  });
+
+  // Add skip listeners
+  container.querySelectorAll('.btn-add-term-no').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.target.closest('div[style*="background: white"]').remove();
+      if (container.querySelectorAll('.btn-add-term-yes').length === 0) {
+        container.remove();
+      }
+    });
+  });
+
+  // Add voice recording listeners for confirm
+  container.querySelectorAll('.btn-add-term-yes').forEach(btn => {
+    const index = parseInt(btn.dataset.index);
+    const termInfo = newTerms[index];
+    const recordingStatus = container.querySelector(`.new-term-recording-status[data-index="${index}"]`);
+    const timerElement = recordingStatus.querySelector('.timer');
+
+    let isRecordingNewTerm = false;
+    let recordingStartTime = null;
+    let timerInterval = null;
+
+    const startNewTermRecording = async () => {
+      if (isRecordingNewTerm) return;
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        newTermRecorders[index] = {
+          mediaRecorder: new MediaRecorder(stream, { mimeType: 'audio/webm' }),
+          audioChunks: [],
+          stream
+        };
+
+        const recorder = newTermRecorders[index];
+
+        recorder.mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            recorder.audioChunks.push(event.data);
+          }
+        };
+
+        recorder.mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(recorder.audioChunks, { type: 'audio/webm' });
+          await processNewTermAudio(audioBlob, termInfo, index);
+
+          stream.getTracks().forEach(track => track.stop());
+          delete newTermRecorders[index];
+        };
+
+        recorder.mediaRecorder.start();
+        isRecordingNewTerm = true;
+
+        btn.style.background = '#ef4444';
+        btn.textContent = '🔴 Recording...';
+        recordingStatus.style.display = 'block';
+
+        recordingStartTime = Date.now();
+        timerInterval = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+          const minutes = Math.floor(elapsed / 60);
+          const seconds = elapsed % 60;
+          timerElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }, 100);
+
+        showStatus('Recording new term... Release when done', 'info');
+
+      } catch (error) {
+        console.error('Error starting recording:', error);
+        showStatus('Could not access microphone', 'error');
+      }
+    };
+
+    const stopNewTermRecording = () => {
+      if (!isRecordingNewTerm || !newTermRecorders[index]) return;
+
+      newTermRecorders[index].mediaRecorder.stop();
+      isRecordingNewTerm = false;
+
+      btn.style.background = '#10b981';
+      btn.textContent = '🎤 Hold to confirm';
+      recordingStatus.style.display = 'none';
+
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+
+      showStatus('Processing new term...', 'info');
+    };
+
+    btn.addEventListener('mousedown', startNewTermRecording);
+    btn.addEventListener('mouseup', stopNewTermRecording);
+    btn.addEventListener('mouseleave', () => {
+      if (isRecordingNewTerm) stopNewTermRecording();
+    });
+
+    btn.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      startNewTermRecording();
+    });
+    btn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      stopNewTermRecording();
+    });
+  });
+
+  const mainContainer = document.querySelector('.container');
+  const resultsSection = document.getElementById('resultsSection');
+  mainContainer.insertBefore(container, resultsSection);
+
+  setTimeout(() => {
+    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 100);
+}
+
+async function processNewTermAudio(audioBlob, termInfo, index) {
+  try {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    const wavBlob = await audioBufferToWav(audioBuffer);
+    const base64Audio = await blobToBase64(wavBlob);
+
+    const response = await fetch('/api/parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: base64Audio, text: null })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to transcribe');
+    }
+
+    const result = await response.json();
+    const confirmed = result.transcription.trim();
+
+    if (!confirmed) {
+      showStatus('No term detected. Please try again.', 'error');
+      return;
+    }
+
+    // Add to glossary
+    await fetch('/api/terminology', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        standard_term: confirmed,
+        category: 'part_type', // Default category
+        variations: [termInfo.phrase],
+        description: `Auto-detected from user input`
+      })
+    });
+
+    showStatus(`✓ Added "${confirmed}" to glossary!`, 'success');
+
+    const termElement = document.querySelector(`.btn-add-term-yes[data-index="${index}"]`);
+    if (termElement) {
+      termElement.closest('div[style*="background: white"]').remove();
+    }
+
+    const newTermContainer = document.getElementById('newTermSuggestions');
+    if (newTermContainer && newTermContainer.querySelectorAll('.btn-add-term-yes').length === 0) {
+      newTermContainer.remove();
+    }
+
+  } catch (error) {
+    console.error('Error processing new term:', error);
+    showStatus(`Error: ${error.message}`, 'error');
   }
 }
 

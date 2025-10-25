@@ -22,16 +22,19 @@ app.post('/api/parse', async (req, res) => {
     const { audio, text } = req.body;
     let transcription = text || '';
     let suggestions = [];
+    let newTerms = [];
 
     if (audio && !text) {
       const result = await transcribeAudio(audio);
       transcription = result.text;
-      suggestions = result.suggestions;
+      suggestions = result.suggestions || [];
+      newTerms = result.newTerms || [];
     } else if (text) {
       // Also normalize typed text
-      const { normalized, suggestions: textSuggestions } = await normalizeHVACTerms(text);
+      const { normalized, suggestions: textSuggestions, newTerms: textNewTerms } = await normalizeHVACTerms(text);
       transcription = normalized;
-      suggestions = textSuggestions;
+      suggestions = textSuggestions || [];
+      newTerms = textNewTerms || [];
     }
 
     if (!transcription) {
@@ -46,7 +49,8 @@ app.post('/api/parse', async (req, res) => {
     res.json({
       transcription,
       repairs: repairsWithParts,
-      suggestions // Send terminology suggestions to frontend for confirmation
+      suggestions, // Send terminology suggestions to frontend for confirmation
+      newTerms // Send potential new terms to add to glossary
     });
 
   } catch (error) {
@@ -57,7 +61,7 @@ app.post('/api/parse', async (req, res) => {
 
 // Normalize HVAC terminology using semantic search against terminology database
 async function normalizeHVACTerms(text) {
-  if (!text) return { normalized: text, suggestions: [] };
+  if (!text) return { normalized: text, suggestions: [], newTerms: [] };
 
   try {
     console.log('\n🔍 Normalizing HVAC terminology...');
@@ -86,9 +90,16 @@ async function normalizeHVACTerms(text) {
 
     // Find matches in terminology database
     const replacements = [];
+    const potentialNewTerms = []; // Track phrases that might be new terminology
 
     for (const candidate of sortedCandidates) {
       try {
+        // Skip very common words
+        const commonWords = ['the', 'and', 'for', 'with', 'needs', 'need', 'has', 'is', 'are', 'was', 'were', 'be', 'been', 'being'];
+        if (candidate.phrase.split(' ').length === 1 && commonWords.includes(candidate.phrase.toLowerCase())) {
+          continue;
+        }
+
         // Generate embedding for the candidate phrase
         const embeddingResponse = await openai.embeddings.create({
           model: 'text-embedding-3-small',
@@ -110,16 +121,37 @@ async function normalizeHVACTerms(text) {
           LIMIT 1
         `;
 
-        // If we have a strong match (>70% similarity), consider it
-        if (results.length > 0 && results[0].similarity > 0.70) {
-          const match = results[0];
+        const bestMatch = results.length > 0 ? results[0] : null;
+        const similarity = bestMatch ? bestMatch.similarity : 0;
+
+        // Check if this looks like a technical term that should be in glossary
+        const looksTechnical =
+          /\d/.test(candidate.phrase) || // Contains numbers
+          /[A-Z]{2,}/.test(candidate.phrase) || // Has acronyms
+          candidate.phrase.includes('-') || // Has hyphens
+          candidate.phrase.includes('V') || // Voltage indicator
+          candidate.phrase.split(' ').length >= 2; // Multi-word phrase
+
+        // If similarity is low (<50%) and it looks technical, suggest adding to glossary
+        if (looksTechnical && similarity < 0.50 && candidate.phrase.split(' ').length >= 2) {
+          potentialNewTerms.push({
+            phrase: candidate.phrase,
+            bestMatch: bestMatch ? bestMatch.standard_term : null,
+            similarity: similarity
+          });
+          console.log(`  💡 Potential new term: "${candidate.phrase}" (best match: ${similarity > 0 ? (similarity * 100).toFixed(0) + '% - ' + bestMatch.standard_term : 'none'})`);
+        }
+
+        // If we have a strong match (>70% similarity), use it
+        if (similarity > 0.70) {
+          const match = bestMatch;
 
           // Also check if the phrase is in the variations array (exact match gets priority)
           const isExactVariation = match.variations.some(v =>
             v.toLowerCase() === candidate.phrase.toLowerCase()
           );
 
-          const finalSimilarity = isExactVariation ? 1.0 : match.similarity;
+          const finalSimilarity = isExactVariation ? 1.0 : similarity;
 
           if (finalSimilarity > 0.70) {
             replacements.push({
@@ -190,12 +222,18 @@ async function normalizeHVACTerms(text) {
       console.log('  No terminology matches found');
     }
 
-    return { normalized, suggestions };
+    // Remove duplicate new terms and filter overlaps with replacements
+    const usedPhrases = new Set(finalReplacements.map(r => r.original.toLowerCase()));
+    const uniqueNewTerms = potentialNewTerms
+      .filter(nt => !usedPhrases.has(nt.phrase.toLowerCase()))
+      .slice(0, 3); // Limit to top 3 to avoid overwhelming user
+
+    return { normalized, suggestions, newTerms: uniqueNewTerms };
 
   } catch (error) {
     console.error('❌ Terminology normalization failed:', error.message);
     // Return original text if normalization fails
-    return { normalized: text, suggestions: [] };
+    return { normalized: text, suggestions: [], newTerms: [] };
   }
 }
 
@@ -217,14 +255,14 @@ async function transcribeAudio(base64Audio) {
     });
 
     const rawText = transcription.text || '';
-    const { normalized, suggestions } = await normalizeHVACTerms(rawText);
+    const { normalized, suggestions, newTerms } = await normalizeHVACTerms(rawText);
 
     console.log('Raw transcription:', rawText);
     if (rawText !== normalized) {
       console.log('Normalized transcription:', normalized);
     }
 
-    return { text: normalized, suggestions };
+    return { text: normalized, suggestions, newTerms };
 
   } catch (error) {
     console.error('Transcription error:', error);
