@@ -268,7 +268,7 @@ async function handleSubmit() {
 async function submitToBackend(audio, text) {
   try {
     submitBtn.disabled = true;
-    recordBtn.disabled = true;
+    floatingMic.disabled = true;
 
     const loadingSpinner = document.createElement('span');
     loadingSpinner.className = 'loading-spinner';
@@ -294,14 +294,13 @@ async function submitToBackend(audio, text) {
     const result = await response.json();
 
     displayResults(result);
-    showStatus('Successfully parsed repair items!', 'success');
 
   } catch (error) {
     console.error('Error submitting:', error);
     showStatus(`Error: ${error.message}`, 'error');
   } finally {
     submitBtn.disabled = false;
-    recordBtn.disabled = false;
+    floatingMic.disabled = false;
 
     const spinner = document.getElementById('loadingSpinner');
     if (spinner) spinner.remove();
