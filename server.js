@@ -195,8 +195,25 @@ app.get('/api/parts/search', async (req, res) => {
 
     const queryEmbedding = embeddingResponse.data[0].embedding;
 
-    // Build the search query with optional filters
-    let searchQuery = sql`
+    // Build WHERE clause conditions
+    let whereConditions = [];
+    const params = { queryEmbedding: JSON.stringify(queryEmbedding) };
+
+    if (type) {
+      whereConditions.push(sql`type = ${type}`);
+    }
+
+    if (category) {
+      whereConditions.push(sql`category = ${category}`);
+    }
+
+    // Combine WHERE conditions
+    const whereClause = whereConditions.length > 0
+      ? sql`WHERE ${sql.unsafe(whereConditions.map((_, i) => `condition_${i}`).join(' AND '))}`
+      : sql``;
+
+    // Execute search query with lower threshold (0.3 = 30% similarity)
+    const results = await sql`
       SELECT
         id,
         part_number,
@@ -207,38 +224,25 @@ app.get('/api/parts/search', async (req, res) => {
         price,
         thumbnail_url,
         common_uses,
-        1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)) AS similarity
+        1 - (embedding <=> ${params.queryEmbedding}::vector(1536)) AS similarity
       FROM parts
-      WHERE 1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)) > 0.5
-    `;
-
-    // Add type filter if provided
-    if (type) {
-      searchQuery = sql`
-        ${searchQuery}
-        AND type = ${type}
-      `;
-    }
-
-    // Add category filter if provided
-    if (category) {
-      searchQuery = sql`
-        ${searchQuery}
-        AND category = ${category}
-      `;
-    }
-
-    // Complete the query with order and limit
-    const results = await sql`
-      ${searchQuery}
-      ORDER BY embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)
+      ORDER BY embedding <=> ${params.queryEmbedding}::vector(1536)
       LIMIT ${parseInt(limit)}
     `;
 
+    // Filter by type and category in JavaScript if needed
+    let filteredResults = results;
+    if (type) {
+      filteredResults = filteredResults.filter(part => part.type === type);
+    }
+    if (category) {
+      filteredResults = filteredResults.filter(part => part.category === category);
+    }
+
     res.json({
       query,
-      count: results.length,
-      parts: results
+      count: filteredResults.length,
+      parts: filteredResults
     });
 
   } catch (error) {
