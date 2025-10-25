@@ -2,6 +2,7 @@ let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
 let currentRepairs = []; // In-memory storage for repairs
+let currentRepairIndex = null; // Track which repair is getting parts
 
 const jobNotesTextarea = document.getElementById('jobNotes');
 const recordBtn = document.getElementById('recordBtn');
@@ -14,8 +15,30 @@ const repairGrid = document.getElementById('repairGrid');
 const recordIcon = document.getElementById('recordIcon');
 const recordText = document.getElementById('recordText');
 
+// Parts search modal elements
+const partsModal = document.getElementById('partsModal');
+const closeModal = document.getElementById('closeModal');
+const partsSearchInput = document.getElementById('partsSearchInput');
+const partsResults = document.getElementById('partsResults');
+
 recordBtn.addEventListener('click', toggleRecording);
 submitBtn.addEventListener('click', handleSubmit);
+closeModal.addEventListener('click', () => hidePartsModal());
+partsModal.addEventListener('click', (e) => {
+  if (e.target === partsModal) hidePartsModal();
+});
+
+// Debounced search
+let searchTimeout;
+partsSearchInput.addEventListener('input', (e) => {
+  clearTimeout(searchTimeout);
+  const query = e.target.value.trim();
+  if (query.length > 1) {
+    searchTimeout = setTimeout(() => searchParts(query), 300);
+  } else {
+    partsResults.innerHTML = '';
+  }
+});
 
 function showStatus(message, type = 'info') {
   statusMessage.textContent = message;
@@ -304,6 +327,14 @@ function createRepairCard(repair, index) {
   buttonGroup.style.display = 'flex';
   buttonGroup.style.gap = '8px';
 
+  const searchPartsBtn = document.createElement('button');
+  searchPartsBtn.className = 'btn-primary';
+  searchPartsBtn.style.fontSize = '0.85rem';
+  searchPartsBtn.style.padding = '6px 12px';
+  searchPartsBtn.style.minWidth = 'auto';
+  searchPartsBtn.innerHTML = '🔍 Parts';
+  searchPartsBtn.addEventListener('click', () => showPartsModal(index));
+
   const editBtn = document.createElement('button');
   editBtn.className = 'btn-edit';
   editBtn.innerHTML = '✏️ Edit';
@@ -314,6 +345,7 @@ function createRepairCard(repair, index) {
   deleteBtn.innerHTML = '🗑️ Delete';
   deleteBtn.addEventListener('click', () => deleteRepair(index));
 
+  buttonGroup.appendChild(searchPartsBtn);
   buttonGroup.appendChild(editBtn);
   buttonGroup.appendChild(deleteBtn);
 
@@ -368,6 +400,68 @@ function createRepairCard(repair, index) {
 
     actionsSection.appendChild(actionsList);
     card.appendChild(actionsSection);
+  }
+
+  // Display selected parts from database
+  if (repair.selectedParts && repair.selectedParts.length > 0) {
+    const selectedPartsSection = document.createElement('div');
+    selectedPartsSection.className = 'section';
+    selectedPartsSection.style.marginTop = '16px';
+    selectedPartsSection.style.padding = '12px';
+    selectedPartsSection.style.background = '#f0fdf4';
+    selectedPartsSection.style.borderRadius = '8px';
+    selectedPartsSection.style.border = '2px solid #10b981';
+
+    const selectedPartsTitle = document.createElement('div');
+    selectedPartsTitle.className = 'section-title';
+    selectedPartsTitle.textContent = '✓ Selected Parts from Catalog';
+    selectedPartsTitle.style.color = '#10b981';
+    selectedPartsSection.appendChild(selectedPartsTitle);
+
+    repair.selectedParts.forEach(part => {
+      const partCard = document.createElement('div');
+      partCard.style.display = 'flex';
+      partCard.style.justifyContent = 'space-between';
+      partCard.style.alignItems = 'center';
+      partCard.style.padding = '8px';
+      partCard.style.background = 'white';
+      partCard.style.borderRadius = '6px';
+      partCard.style.marginTop = '8px';
+
+      const partInfo = document.createElement('div');
+      partInfo.style.flex = '1';
+
+      const typeBadge = document.createElement('span');
+      typeBadge.className = part.type === 'consumable' ? 'part-type-consumable' : 'part-type-inventory';
+      typeBadge.textContent = part.type === 'consumable' ? 'Consumable' : 'Inventory';
+      typeBadge.style.fontSize = '0.7rem';
+      typeBadge.style.marginLeft = '8px';
+
+      partInfo.innerHTML = `<strong>${part.name}</strong> ${typeBadge.outerHTML}<br><span style="font-size: 0.85rem; color: #10b981;">$${parseFloat(part.price).toFixed(2)} × ${part.quantity}</span>`;
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn-delete';
+      removeBtn.style.fontSize = '0.75rem';
+      removeBtn.style.padding = '4px 8px';
+      removeBtn.innerHTML = '×';
+      removeBtn.addEventListener('click', () => removePartFromRepair(index, part.part_number));
+
+      partCard.appendChild(partInfo);
+      partCard.appendChild(removeBtn);
+      selectedPartsSection.appendChild(partCard);
+    });
+
+    // Show total price
+    const totalPrice = repair.selectedParts.reduce((sum, part) => sum + (parseFloat(part.price) * part.quantity), 0);
+    const totalDiv = document.createElement('div');
+    totalDiv.style.marginTop = '12px';
+    totalDiv.style.fontWeight = '600';
+    totalDiv.style.textAlign = 'right';
+    totalDiv.style.color = '#10b981';
+    totalDiv.textContent = `Parts Total: $${totalPrice.toFixed(2)}`;
+    selectedPartsSection.appendChild(totalDiv);
+
+    card.appendChild(selectedPartsSection);
   }
 
   if (repair.notes) {
@@ -481,4 +575,118 @@ async function submitFinalRepairs() {
     console.error('Error submitting repairs:', error);
     showStatus(`Error: ${error.message}`, 'error');
   }
+}
+
+// Parts Search Functions
+function showPartsModal(repairIndex) {
+  currentRepairIndex = repairIndex;
+  partsModal.classList.remove('hidden');
+  partsSearchInput.value = '';
+  partsResults.innerHTML = '<div class="no-results">Start typing to search for parts...</div>';
+  partsSearchInput.focus();
+}
+
+function hidePartsModal() {
+  partsModal.classList.add('hidden');
+  currentRepairIndex = null;
+  partsSearchInput.value = '';
+  partsResults.innerHTML = '';
+}
+
+async function searchParts(query) {
+  try {
+    partsResults.innerHTML = '<div class="no-results">Searching...</div>';
+
+    const response = await fetch(`/api/parts/search?query=${encodeURIComponent(query)}&limit=10`);
+
+    if (!response.ok) {
+      throw new Error('Search failed');
+    }
+
+    const data = await response.json();
+    displayPartsResults(data.parts);
+
+  } catch (error) {
+    console.error('Parts search error:', error);
+    partsResults.innerHTML = '<div class="no-results">Error searching parts. Please try again.</div>';
+  }
+}
+
+function displayPartsResults(parts) {
+  if (parts.length === 0) {
+    partsResults.innerHTML = '<div class="no-results">No parts found. Try a different search.</div>';
+    return;
+  }
+
+  partsResults.innerHTML = '';
+
+  parts.forEach(part => {
+    const partItem = document.createElement('div');
+    partItem.className = 'part-item';
+
+    const typeBadgeClass = part.type === 'consumable' ? 'part-type-consumable' : 'part-type-inventory';
+    const typeLabel = part.type === 'consumable' ? 'Consumable' : 'Inventory';
+
+    partItem.innerHTML = `
+      <img src="${part.thumbnail_url}" alt="${part.name}" class="part-thumbnail" />
+      <div class="part-info">
+        <div class="part-name">${part.name}</div>
+        <div class="part-description">${part.description.substring(0, 120)}${part.description.length > 120 ? '...' : ''}</div>
+        <div class="part-meta">
+          <span class="part-price">$${parseFloat(part.price).toFixed(2)}</span>
+          <span class="part-category">${part.category}</span>
+          <span class="part-type-badge ${typeBadgeClass}">${typeLabel}</span>
+          ${part.similarity ? `<span style="font-size: 0.75rem; color: #6b7280;">${(part.similarity * 100).toFixed(0)}% match</span>` : ''}
+        </div>
+      </div>
+      <button class="btn-add-part">Add Part</button>
+    `;
+
+    partItem.querySelector('.btn-add-part').addEventListener('click', (e) => {
+      e.stopPropagation();
+      addPartToRepair(part);
+    });
+
+    partsResults.appendChild(partItem);
+  });
+}
+
+function addPartToRepair(part) {
+  if (currentRepairIndex === null) return;
+
+  const repair = currentRepairs[currentRepairIndex];
+
+  // Initialize selectedParts array if it doesn't exist
+  if (!repair.selectedParts) {
+    repair.selectedParts = [];
+  }
+
+  // Check if part already added
+  const alreadyAdded = repair.selectedParts.some(p => p.part_number === part.part_number);
+  if (alreadyAdded) {
+    showStatus('This part is already added to this repair.', 'info');
+    return;
+  }
+
+  // Add part to repair
+  repair.selectedParts.push({
+    part_number: part.part_number,
+    name: part.name,
+    price: part.price,
+    type: part.type,
+    quantity: 1
+  });
+
+  renderRepairs();
+  hidePartsModal();
+  showStatus(`Added ${part.name} to repair!`, 'success');
+}
+
+function removePartFromRepair(repairIndex, partNumber) {
+  const repair = currentRepairs[repairIndex];
+  if (!repair.selectedParts) return;
+
+  repair.selectedParts = repair.selectedParts.filter(p => p.part_number !== partNumber);
+  renderRepairs();
+  showStatus('Part removed from repair.', 'info');
 }

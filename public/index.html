@@ -329,6 +329,186 @@
         }
       }
 
+      /* Parts Search Modal */
+      .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        padding: 20px;
+      }
+
+      .modal-content {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        max-width: 800px;
+        width: 100%;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+
+      .modal-header h2 {
+        margin: 0;
+        color: #1f2937;
+      }
+
+      .close-btn {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #6b7280;
+        padding: 0;
+        min-width: auto;
+      }
+
+      .close-btn:hover {
+        color: #1f2937;
+      }
+
+      .search-box {
+        position: relative;
+        margin-bottom: 20px;
+      }
+
+      .search-box input {
+        width: 100%;
+        padding: 12px 40px 12px 16px;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        font-size: 1rem;
+      }
+
+      .search-box input:focus {
+        outline: none;
+        border-color: #667eea;
+      }
+
+      .search-icon {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #6b7280;
+      }
+
+      .parts-grid {
+        display: grid;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+
+      .part-item {
+        display: flex;
+        gap: 16px;
+        padding: 16px;
+        border: 2px solid #e5e7eb;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .part-item:hover {
+        border-color: #667eea;
+        background: #f9fafb;
+      }
+
+      .part-thumbnail {
+        width: 80px;
+        height: 80px;
+        border-radius: 8px;
+        object-fit: cover;
+        background: #f3f4f6;
+      }
+
+      .part-info {
+        flex: 1;
+      }
+
+      .part-name {
+        font-weight: 600;
+        color: #1f2937;
+        margin-bottom: 4px;
+      }
+
+      .part-description {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-bottom: 8px;
+      }
+
+      .part-meta {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .part-price {
+        font-weight: 600;
+        color: #10b981;
+        font-size: 1.1rem;
+      }
+
+      .part-category {
+        background: #e5e7eb;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        color: #374151;
+      }
+
+      .part-type-badge {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+
+      .part-type-inventory {
+        background: #dbeafe;
+        color: #1e40af;
+      }
+
+      .part-type-consumable {
+        background: #fef3c7;
+        color: #92400e;
+      }
+
+      .btn-add-part {
+        background: #10b981;
+        color: white;
+        padding: 8px 16px;
+        font-size: 0.85rem;
+        min-width: auto;
+        flex: none;
+      }
+
+      .btn-add-part:hover {
+        background: #059669;
+      }
+
+      .no-results {
+        text-align: center;
+        padding: 40px;
+        color: #6b7280;
+      }
+
       @media (max-width: 640px) {
         body {
           padding: 12px;
@@ -392,6 +572,27 @@
           <h2 style="margin-bottom: 16px; color: #1f2937">Parsed Repairs</h2>
           <div id="repairGrid" class="repair-grid"></div>
         </div>
+      </div>
+    </div>
+
+    <!-- Parts Search Modal -->
+    <div id="partsModal" class="modal-overlay hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Search Parts</h2>
+          <button class="close-btn" id="closeModal">&times;</button>
+        </div>
+
+        <div class="search-box">
+          <input
+            type="text"
+            id="partsSearchInput"
+            placeholder="Search for parts... (e.g., contactor, filter, tape)"
+          />
+          <span class="search-icon">🔍</span>
+        </div>
+
+        <div id="partsResults" class="parts-grid"></div>
       </div>
     </div>
 
