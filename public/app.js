@@ -21,6 +21,13 @@ const closeModal = document.getElementById('closeModal');
 const partsSearchInput = document.getElementById('partsSearchInput');
 const partsResults = document.getElementById('partsResults');
 
+// Ensure modal is hidden on page load
+window.addEventListener('DOMContentLoaded', () => {
+  if (partsModal) {
+    partsModal.classList.add('hidden');
+  }
+});
+
 recordBtn.addEventListener('click', toggleRecording);
 submitBtn.addEventListener('click', handleSubmit);
 closeModal.addEventListener('click', () => hidePartsModal());
@@ -587,10 +594,16 @@ function showPartsModal(repairIndex) {
 }
 
 function hidePartsModal() {
-  partsModal.classList.add('hidden');
+  if (partsModal) {
+    partsModal.classList.add('hidden');
+  }
   currentRepairIndex = null;
-  partsSearchInput.value = '';
-  partsResults.innerHTML = '';
+  if (partsSearchInput) {
+    partsSearchInput.value = '';
+  }
+  if (partsResults) {
+    partsResults.innerHTML = '';
+  }
 }
 
 async function searchParts(query) {
