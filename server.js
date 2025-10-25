@@ -64,6 +64,83 @@ app.post('/api/parse', async (req, res) => {
   }
 });
 
+// Agent 1: Terminology Quality Check
+// Uses GPT-4o-mini to intelligently decide if terminology matches need user confirmation
+async function evaluateTerminologyMatches(matches) {
+  if (!matches || matches.length === 0) return [];
+
+  try {
+    console.log('\n🤖 Agent 1: Evaluating terminology matches...');
+
+    const systemPrompt = `You are a terminology quality check agent for an HVAC repair documentation system.
+
+Your job: Decide if terminology matches need user confirmation or can be auto-accepted.
+
+AUTO-ACCEPT if:
+- Only punctuation differences (e.g., "damper actuator." vs "damper actuator")
+- Only capitalization differences (e.g., "RTU" vs "rtu")
+- Obvious abbreviations (e.g., "lb" vs "lbs", "R410A" vs "R-410A")
+- High confidence matches (>85%) of clearly same terms
+- Formatting differences (e.g., "24 volt" vs "24V")
+
+REQUIRE CONFIRMATION if:
+- Ambiguous or could mean different things (e.g., "R-210" vs "RTU-10")
+- Low confidence (<75%) even if they look similar
+- Completely different technical meanings (e.g., "contactor" vs "capacitor")
+- User said something that could be multiple parts
+
+For each match, return:
+{
+  "needs_confirmation": boolean,
+  "reason": "brief explanation",
+  "auto_accept": boolean
+}
+
+Be generous with auto-accept for obvious matches. Only require confirmation for genuinely ambiguous cases.`;
+
+    const matchDescriptions = matches.map((m, idx) =>
+      `Match ${idx + 1}: "${m.original}" → "${m.suggested}" (${(m.confidence * 100).toFixed(0)}% similarity, category: ${m.category})`
+    ).join('\n');
+
+    const userPrompt = `Evaluate these terminology matches:\n\n${matchDescriptions}\n\nReturn a JSON array with one decision object per match, in the same order.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.1,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    const result = JSON.parse(responseText);
+
+    // Handle both array and object with decisions array
+    const decisions = Array.isArray(result) ? result : (result.decisions || result.matches || []);
+
+    decisions.forEach((decision, idx) => {
+      const match = matches[idx];
+      if (match) {
+        const status = decision.needs_confirmation ? '❓ Needs confirmation' : '✅ Auto-accept';
+        console.log(`  ${status}: "${match.original}" → "${match.suggested}" (${decision.reason})`);
+      }
+    });
+
+    return decisions;
+
+  } catch (error) {
+    console.error('❌ Agent 1 evaluation failed:', error.message);
+    // Fallback: if agent fails, use conservative approach (require confirmation for <90%)
+    return matches.map(m => ({
+      needs_confirmation: m.confidence < 0.90,
+      reason: 'Agent evaluation failed, using fallback threshold',
+      auto_accept: m.confidence >= 0.90
+    }));
+  }
+}
+
 // Normalize HVAC terminology using semantic search against terminology database
 async function normalizeHVACTerms(text) {
   if (!text) return { normalized: text, suggestions: [], newTerms: [] };
@@ -229,9 +306,9 @@ async function normalizeHVACTerms(text) {
       }
     }
 
-    // Apply replacements and track suggestions for low-confidence matches
+    // Apply replacements and track potential suggestions for Agent 1 evaluation
     let normalized = text;
-    const suggestions = []; // Terms that need confirmation
+    const potentialSuggestions = []; // Candidates for confirmation
 
     for (const replacement of finalReplacements.sort((a, b) => b.startIndex - a.startIndex)) {
       const regex = new RegExp(replacement.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
@@ -240,20 +317,26 @@ async function normalizeHVACTerms(text) {
       const confidencePercent = (replacement.similarity * 100).toFixed(0);
       console.log(`  ✓ "${replacement.original}" → "${replacement.replacement}" (${confidencePercent}% match, ${replacement.category})`);
 
-      // If confidence is below 90%, suggest confirmation
-      // But only if the terms are actually different (not just punctuation/case)
-      const normalizedOriginal = replacement.original.toLowerCase().replace(/[.,;:!?]+/g, '').trim();
-      const normalizedSuggested = replacement.replacement.toLowerCase().replace(/[.,;:!?]+/g, '').trim();
-      const areActuallyDifferent = normalizedOriginal !== normalizedSuggested;
-
-      if (replacement.similarity < 0.90 && areActuallyDifferent) {
-        suggestions.push({
+      // Collect all matches below 95% confidence for Agent 1 to evaluate
+      // Agent 1 will decide which actually need confirmation
+      if (replacement.similarity < 0.95) {
+        potentialSuggestions.push({
           original: replacement.original,
           suggested: replacement.replacement,
           confidence: replacement.similarity,
           category: replacement.category
         });
       }
+    }
+
+    // Use Agent 1 to intelligently filter which matches need confirmation
+    let suggestions = [];
+    if (potentialSuggestions.length > 0) {
+      const decisions = await evaluateTerminologyMatches(potentialSuggestions);
+      suggestions = potentialSuggestions.filter((suggestion, idx) => {
+        const decision = decisions[idx];
+        return decision && decision.needs_confirmation;
+      });
     }
 
     if (finalReplacements.length === 0) {
