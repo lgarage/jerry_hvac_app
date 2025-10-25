@@ -459,6 +459,9 @@ function showTerminologySuggestions(suggestions) {
   `;
   suggestionsContainer.appendChild(description);
 
+  // Track recording state for corrections
+  const correctionRecorders = {};
+
   suggestions.forEach((suggestion, index) => {
     const suggestionItem = document.createElement('div');
     suggestionItem.style.cssText = `
@@ -477,17 +480,16 @@ function showTerminologySuggestions(suggestions) {
         <strong style="color: #1f2937;">Did you mean:</strong> "<span style="color: #10b981;">${suggestion.suggested}</span>"?
         <span style="background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; margin-left: 8px;">${confidencePercent}% match</span>
       </div>
-      <div style="display: flex; gap: 8px; align-items: center;">
-        <button class="btn-confirm-yes" data-index="${index}" style="background: #10b981; color: white; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <button class="btn-confirm-yes" data-index="${index}" style="background: #10b981; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.95rem;">
           ✓ Yes, correct
         </button>
-        <button class="btn-confirm-no" data-index="${index}" style="background: #6b7280; color: white; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">
-          ✗ No, I meant:
+        <button class="btn-confirm-no" data-index="${index}" style="background: #6b7280; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.2s; user-select: none;">
+          🎤 Hold to say correction
         </button>
-        <input type="text" class="correction-input" data-index="${index}" placeholder="Enter correct term..." style="display: none; padding: 6px 12px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 0.9rem; flex: 1;">
-        <button class="btn-save-correction" data-index="${index}" style="display: none; background: #667eea; color: white; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">
-          Save
-        </button>
+        <div class="recording-status" data-index="${index}" style="display: none; color: #ef4444; font-weight: 600; font-size: 0.9rem;">
+          🔴 Recording... <span class="timer">0:00</span>
+        </div>
       </div>
     `;
 
@@ -512,41 +514,105 @@ function showTerminologySuggestions(suggestions) {
     });
   });
 
+  // Push-to-talk for corrections
   suggestionsContainer.querySelectorAll('.btn-confirm-no').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const index = parseInt(e.target.dataset.index);
-      const parent = e.target.parentElement;
+    const index = parseInt(btn.dataset.index);
+    const suggestion = suggestions[index];
+    const recordingStatus = suggestionsContainer.querySelector(`.recording-status[data-index="${index}"]`);
+    const timerElement = recordingStatus.querySelector('.timer');
 
-      // Hide No button, show input and Save button
-      btn.style.display = 'none';
-      parent.querySelector('.btn-confirm-yes').style.display = 'none';
-      parent.querySelector('.correction-input').style.display = 'block';
-      parent.querySelector('.btn-save-correction').style.display = 'block';
-      parent.querySelector('.correction-input').focus();
+    let isRecordingCorrection = false;
+    let recordingStartTime = null;
+    let timerInterval = null;
+
+    const startCorrectionRecording = async () => {
+      if (isRecordingCorrection) return;
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        correctionRecorders[index] = {
+          mediaRecorder: new MediaRecorder(stream, { mimeType: 'audio/webm' }),
+          audioChunks: [],
+          stream
+        };
+
+        const recorder = correctionRecorders[index];
+
+        recorder.mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            recorder.audioChunks.push(event.data);
+          }
+        };
+
+        recorder.mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(recorder.audioChunks, { type: 'audio/webm' });
+          await processCorrectionAudio(audioBlob, suggestion, index);
+
+          stream.getTracks().forEach(track => track.stop());
+          delete correctionRecorders[index];
+        };
+
+        recorder.mediaRecorder.start();
+        isRecordingCorrection = true;
+
+        // Visual feedback
+        btn.style.background = '#ef4444';
+        btn.textContent = '🔴 Recording...';
+        recordingStatus.style.display = 'block';
+
+        // Timer
+        recordingStartTime = Date.now();
+        timerInterval = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+          const minutes = Math.floor(elapsed / 60);
+          const seconds = elapsed % 60;
+          timerElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }, 100);
+
+        showStatus('Recording correction... Release button when done', 'info');
+
+      } catch (error) {
+        console.error('Error starting correction recording:', error);
+        showStatus('Could not access microphone', 'error');
+      }
+    };
+
+    const stopCorrectionRecording = () => {
+      if (!isRecordingCorrection || !correctionRecorders[index]) return;
+
+      correctionRecorders[index].mediaRecorder.stop();
+      isRecordingCorrection = false;
+
+      // Reset visual feedback
+      btn.style.background = '#6b7280';
+      btn.textContent = '🎤 Hold to say correction';
+      recordingStatus.style.display = 'none';
+
+      // Clear timer
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+
+      showStatus('Processing correction...', 'info');
+    };
+
+    // Mouse events
+    btn.addEventListener('mousedown', startCorrectionRecording);
+    btn.addEventListener('mouseup', stopCorrectionRecording);
+    btn.addEventListener('mouseleave', () => {
+      if (isRecordingCorrection) stopCorrectionRecording();
     });
-  });
 
-  suggestionsContainer.querySelectorAll('.btn-save-correction').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const index = parseInt(e.target.dataset.index);
-      const suggestion = suggestions[index];
-      const correctionInput = e.target.parentElement.querySelector('.correction-input');
-      const corrected = correctionInput.value.trim();
-
-      if (!corrected) {
-        showStatus('Please enter a correction', 'error');
-        return;
-      }
-
-      await confirmTerminology(suggestion.original, corrected, suggestion.category);
-
-      // Remove this suggestion from the UI
-      e.target.closest('div[style*="background: white"]').remove();
-
-      // If no more suggestions, remove the container
-      if (suggestionsContainer.querySelectorAll('.btn-save-correction').length === 0) {
-        suggestionsContainer.remove();
-      }
+    // Touch events for mobile
+    btn.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      startCorrectionRecording();
+    });
+    btn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      stopCorrectionRecording();
     });
   });
 
@@ -559,6 +625,56 @@ function showTerminologySuggestions(suggestions) {
   setTimeout(() => {
     suggestionsContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, 100);
+}
+
+async function processCorrectionAudio(audioBlob, suggestion, index) {
+  try {
+    // Convert webm to wav and base64
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    const wavBlob = await audioBufferToWav(audioBuffer);
+    const base64Audio = await blobToBase64(wavBlob);
+
+    // Transcribe the correction
+    const response = await fetch('/api/parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: base64Audio, text: null })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to transcribe correction');
+    }
+
+    const result = await response.json();
+    const corrected = result.transcription.trim();
+
+    if (!corrected) {
+      showStatus('No correction detected. Please try again.', 'error');
+      return;
+    }
+
+    // Save the correction
+    await confirmTerminology(suggestion.original, corrected, suggestion.category);
+
+    // Remove this suggestion from the UI
+    const suggestionElement = document.querySelector(`.btn-confirm-no[data-index="${index}"]`);
+    if (suggestionElement) {
+      suggestionElement.closest('div[style*="background: white"]').remove();
+    }
+
+    // If no more suggestions, remove the container
+    const container = document.getElementById('terminologySuggestions');
+    if (container && container.querySelectorAll('.btn-confirm-yes').length === 0) {
+      container.remove();
+    }
+
+  } catch (error) {
+    console.error('Error processing correction:', error);
+    showStatus(`Error processing correction: ${error.message}`, 'error');
+  }
 }
 
 async function confirmTerminology(original, corrected, category) {
