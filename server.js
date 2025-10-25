@@ -21,9 +21,17 @@ app.post('/api/parse', async (req, res) => {
   try {
     const { audio, text } = req.body;
     let transcription = text || '';
+    let suggestions = [];
 
     if (audio && !text) {
-      transcription = await transcribeAudio(audio);
+      const result = await transcribeAudio(audio);
+      transcription = result.text;
+      suggestions = result.suggestions;
+    } else if (text) {
+      // Also normalize typed text
+      const { normalized, suggestions: textSuggestions } = await normalizeHVACTerms(text);
+      transcription = normalized;
+      suggestions = textSuggestions;
     }
 
     if (!transcription) {
@@ -37,7 +45,8 @@ app.post('/api/parse', async (req, res) => {
 
     res.json({
       transcription,
-      repairs: repairsWithParts
+      repairs: repairsWithParts,
+      suggestions // Send terminology suggestions to frontend for confirmation
     });
 
   } catch (error) {
@@ -48,7 +57,7 @@ app.post('/api/parse', async (req, res) => {
 
 // Normalize HVAC terminology using semantic search against terminology database
 async function normalizeHVACTerms(text) {
-  if (!text) return text;
+  if (!text) return { normalized: text, suggestions: [] };
 
   try {
     console.log('\n🔍 Normalizing HVAC terminology...');
@@ -155,25 +164,38 @@ async function normalizeHVACTerms(text) {
       }
     }
 
-    // Apply replacements
+    // Apply replacements and track suggestions for low-confidence matches
     let normalized = text;
+    const suggestions = []; // Terms that need confirmation
+
     for (const replacement of finalReplacements.sort((a, b) => b.startIndex - a.startIndex)) {
       const regex = new RegExp(replacement.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
       normalized = normalized.replace(regex, replacement.replacement);
 
-      console.log(`  ✓ "${replacement.original}" → "${replacement.replacement}" (${(replacement.similarity * 100).toFixed(0)}% match, ${replacement.category})`);
+      const confidencePercent = (replacement.similarity * 100).toFixed(0);
+      console.log(`  ✓ "${replacement.original}" → "${replacement.replacement}" (${confidencePercent}% match, ${replacement.category})`);
+
+      // If confidence is below 85%, suggest confirmation
+      if (replacement.similarity < 0.85) {
+        suggestions.push({
+          original: replacement.original,
+          suggested: replacement.replacement,
+          confidence: replacement.similarity,
+          category: replacement.category
+        });
+      }
     }
 
     if (finalReplacements.length === 0) {
       console.log('  No terminology matches found');
     }
 
-    return normalized;
+    return { normalized, suggestions };
 
   } catch (error) {
     console.error('❌ Terminology normalization failed:', error.message);
     // Return original text if normalization fails
-    return text;
+    return { normalized: text, suggestions: [] };
   }
 }
 
@@ -195,14 +217,14 @@ async function transcribeAudio(base64Audio) {
     });
 
     const rawText = transcription.text || '';
-    const normalizedText = await normalizeHVACTerms(rawText);
+    const { normalized, suggestions } = await normalizeHVACTerms(rawText);
 
     console.log('Raw transcription:', rawText);
-    if (rawText !== normalizedText) {
-      console.log('Normalized transcription:', normalizedText);
+    if (rawText !== normalized) {
+      console.log('Normalized transcription:', normalized);
     }
 
-    return normalizedText;
+    return { text: normalized, suggestions };
 
   } catch (error) {
     console.error('Transcription error:', error);
@@ -557,6 +579,122 @@ app.get('/api/parts/categories', async (req, res) => {
 });
 
 // Terminology Management Endpoints
+
+// Confirm and save a terminology variation
+app.post('/api/terminology/confirm', async (req, res) => {
+  try {
+    const { original, corrected, category } = req.body;
+
+    if (!original || !corrected) {
+      return res.status(400).json({ error: 'original and corrected are required' });
+    }
+
+    console.log(`\n📝 Confirming terminology: "${original}" → "${corrected}"`);
+
+    // Check if the corrected term already exists in the database
+    const existing = await sql`
+      SELECT id, standard_term, variations, description, category
+      FROM hvac_terminology
+      WHERE standard_term ILIKE ${corrected}
+      LIMIT 1
+    `;
+
+    if (existing.length > 0) {
+      // Add the original as a variation to the existing term
+      const term = existing[0];
+
+      // Check if variation already exists
+      if (term.variations.some(v => v.toLowerCase() === original.toLowerCase())) {
+        console.log(`  ✓ Variation "${original}" already exists for "${term.standard_term}"`);
+        return res.json({
+          success: true,
+          message: 'Variation already exists',
+          term
+        });
+      }
+
+      // Add new variation
+      const updatedVariations = [...term.variations, original];
+
+      // Regenerate embedding with new variation
+      const embeddingText = [
+        term.standard_term,
+        ...updatedVariations,
+        term.description || ''
+      ].join(' ');
+
+      const embeddingResponse = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: embeddingText,
+      });
+
+      const embedding = embeddingResponse.data[0].embedding;
+      const embeddingStr = JSON.stringify(embedding);
+
+      // Update the term
+      const result = await sql`
+        UPDATE hvac_terminology
+        SET
+          variations = ${updatedVariations},
+          embedding = ${embeddingStr}::vector(1536),
+          updated_at = NOW()
+        WHERE id = ${term.id}
+        RETURNING id, standard_term, variations, category
+      `;
+
+      console.log(`  ✓ Added "${original}" as variation of "${term.standard_term}"`);
+
+      res.json({
+        success: true,
+        message: 'Variation added successfully',
+        term: result[0]
+      });
+
+    } else {
+      // Create new terminology entry
+      const finalCategory = category || 'other';
+
+      const embeddingText = [corrected, original].join(' ');
+
+      const embeddingResponse = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: embeddingText,
+      });
+
+      const embedding = embeddingResponse.data[0].embedding;
+      const embeddingStr = JSON.stringify(embedding);
+
+      const result = await sql`
+        INSERT INTO hvac_terminology (
+          standard_term,
+          category,
+          variations,
+          description,
+          embedding
+        ) VALUES (
+          ${corrected},
+          ${finalCategory},
+          ${[original]},
+          ${'Auto-learned from user input'},
+          ${embeddingStr}::vector(1536)
+        )
+        RETURNING id, standard_term, category, variations
+      `;
+
+      console.log(`  ✓ Created new term "${corrected}" with variation "${original}"`);
+
+      res.json({
+        success: true,
+        message: 'New term created successfully',
+        term: result[0]
+      });
+    }
+
+  } catch (error) {
+    console.error('Error confirming terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Get all terminology
 app.get('/api/terminology', async (req, res) => {

@@ -416,6 +416,171 @@ function displayResults(result) {
   } else {
     showStatus('No repairs were identified in the notes.', 'error');
   }
+
+  // Show terminology suggestions if any
+  if (result.suggestions && result.suggestions.length > 0) {
+    showTerminologySuggestions(result.suggestions);
+  }
+}
+
+function showTerminologySuggestions(suggestions) {
+  // Remove any existing suggestion UI
+  const existingSuggestions = document.getElementById('terminologySuggestions');
+  if (existingSuggestions) {
+    existingSuggestions.remove();
+  }
+
+  const suggestionsContainer = document.createElement('div');
+  suggestionsContainer.id = 'terminologySuggestions';
+  suggestionsContainer.style.cssText = `
+    background: #eff6ff;
+    border: 2px solid #3b82f6;
+    border-radius: 12px;
+    padding: 16px;
+    margin: 16px 0;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+  `;
+
+  const title = document.createElement('h3');
+  title.textContent = '🤔 Terminology Confirmation';
+  title.style.cssText = `
+    color: #1e40af;
+    margin: 0 0 12px 0;
+    font-size: 1.1rem;
+  `;
+  suggestionsContainer.appendChild(title);
+
+  const description = document.createElement('p');
+  description.textContent = 'I wasn\'t completely sure about these terms. Please confirm:';
+  description.style.cssText = `
+    color: #1e40af;
+    margin: 0 0 12px 0;
+    font-size: 0.9rem;
+  `;
+  suggestionsContainer.appendChild(description);
+
+  suggestions.forEach((suggestion, index) => {
+    const suggestionItem = document.createElement('div');
+    suggestionItem.style.cssText = `
+      background: white;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      border-left: 4px solid #3b82f6;
+    `;
+
+    const confidencePercent = Math.round(suggestion.confidence * 100);
+
+    suggestionItem.innerHTML = `
+      <div style="margin-bottom: 8px;">
+        <strong style="color: #1f2937;">I heard:</strong> "<span style="color: #ef4444;">${suggestion.original}</span>"<br>
+        <strong style="color: #1f2937;">Did you mean:</strong> "<span style="color: #10b981;">${suggestion.suggested}</span>"?
+        <span style="background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; margin-left: 8px;">${confidencePercent}% match</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="btn-confirm-yes" data-index="${index}" style="background: #10b981; color: white; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">
+          ✓ Yes, correct
+        </button>
+        <button class="btn-confirm-no" data-index="${index}" style="background: #6b7280; color: white; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">
+          ✗ No, I meant:
+        </button>
+        <input type="text" class="correction-input" data-index="${index}" placeholder="Enter correct term..." style="display: none; padding: 6px 12px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 0.9rem; flex: 1;">
+        <button class="btn-save-correction" data-index="${index}" style="display: none; background: #667eea; color: white; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">
+          Save
+        </button>
+      </div>
+    `;
+
+    suggestionsContainer.appendChild(suggestionItem);
+  });
+
+  // Add event listeners
+  suggestionsContainer.querySelectorAll('.btn-confirm-yes').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const index = parseInt(e.target.dataset.index);
+      const suggestion = suggestions[index];
+
+      await confirmTerminology(suggestion.original, suggestion.suggested, suggestion.category);
+
+      // Remove this suggestion from the UI
+      e.target.closest('div[style*="background: white"]').remove();
+
+      // If no more suggestions, remove the container
+      if (suggestionsContainer.querySelectorAll('.btn-confirm-yes').length === 0) {
+        suggestionsContainer.remove();
+      }
+    });
+  });
+
+  suggestionsContainer.querySelectorAll('.btn-confirm-no').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const index = parseInt(e.target.dataset.index);
+      const parent = e.target.parentElement;
+
+      // Hide No button, show input and Save button
+      btn.style.display = 'none';
+      parent.querySelector('.btn-confirm-yes').style.display = 'none';
+      parent.querySelector('.correction-input').style.display = 'block';
+      parent.querySelector('.btn-save-correction').style.display = 'block';
+      parent.querySelector('.correction-input').focus();
+    });
+  });
+
+  suggestionsContainer.querySelectorAll('.btn-save-correction').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const index = parseInt(e.target.dataset.index);
+      const suggestion = suggestions[index];
+      const correctionInput = e.target.parentElement.querySelector('.correction-input');
+      const corrected = correctionInput.value.trim();
+
+      if (!corrected) {
+        showStatus('Please enter a correction', 'error');
+        return;
+      }
+
+      await confirmTerminology(suggestion.original, corrected, suggestion.category);
+
+      // Remove this suggestion from the UI
+      e.target.closest('div[style*="background: white"]').remove();
+
+      // If no more suggestions, remove the container
+      if (suggestionsContainer.querySelectorAll('.btn-save-correction').length === 0) {
+        suggestionsContainer.remove();
+      }
+    });
+  });
+
+  // Insert before results section
+  const container = document.querySelector('.container');
+  const resultsSection = document.getElementById('resultsSection');
+  container.insertBefore(suggestionsContainer, resultsSection);
+
+  // Scroll to suggestions
+  setTimeout(() => {
+    suggestionsContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 100);
+}
+
+async function confirmTerminology(original, corrected, category) {
+  try {
+    const response = await fetch('/api/terminology/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ original, corrected, category })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to save terminology');
+    }
+
+    showStatus(`✓ Saved: "${original}" → "${corrected}"`, 'success');
+
+  } catch (error) {
+    console.error('Error confirming terminology:', error);
+    showStatus(`Error saving terminology: ${error.message}`, 'error');
+  }
 }
 
 function renderRepairs() {
