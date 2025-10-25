@@ -78,7 +78,11 @@ async function normalizeHVACTerms(text) {
     // Generate n-grams (phrases of 1-4 words)
     for (let n = 1; n <= 4; n++) {
       for (let i = 0; i <= words.length - n; i++) {
-        const phrase = words.slice(i, i + n).join(' ');
+        let phrase = words.slice(i, i + n).join(' ');
+
+        // Strip trailing punctuation from the phrase
+        phrase = phrase.replace(/[.,;:!?]+$/, '');
+
         // Only add phrases that might be technical terms (contain letters or numbers)
         if (/[a-zA-Z0-9]/.test(phrase) && phrase.length > 1) {
           candidates.add({
@@ -236,8 +240,13 @@ async function normalizeHVACTerms(text) {
       const confidencePercent = (replacement.similarity * 100).toFixed(0);
       console.log(`  ✓ "${replacement.original}" → "${replacement.replacement}" (${confidencePercent}% match, ${replacement.category})`);
 
-      // If confidence is below 85%, suggest confirmation
-      if (replacement.similarity < 0.85) {
+      // If confidence is below 90%, suggest confirmation
+      // But only if the terms are actually different (not just punctuation/case)
+      const normalizedOriginal = replacement.original.toLowerCase().replace(/[.,;:!?]+/g, '').trim();
+      const normalizedSuggested = replacement.replacement.toLowerCase().replace(/[.,;:!?]+/g, '').trim();
+      const areActuallyDifferent = normalizedOriginal !== normalizedSuggested;
+
+      if (replacement.similarity < 0.90 && areActuallyDifferent) {
         suggestions.push({
           original: replacement.original,
           suggested: replacement.replacement,
