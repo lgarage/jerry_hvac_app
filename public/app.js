@@ -276,7 +276,14 @@ async function submitToBackend(audio, text) {
     document.getElementById('submitText').textContent = 'Processing...';
     submitBtn.appendChild(loadingSpinner);
 
-    showStatus('Processing your notes with AI...', 'info');
+    // Check if parts modal is open - if so, only transcribe for search
+    const isPartsModalOpen = partsModal && !partsModal.classList.contains('hidden');
+
+    if (isPartsModalOpen) {
+      showStatus('Transcribing for parts search...', 'info');
+    } else {
+      showStatus('Processing your notes with AI...', 'info');
+    }
 
     const response = await fetch('/api/parse', {
       method: 'POST',
@@ -293,7 +300,15 @@ async function submitToBackend(audio, text) {
 
     const result = await response.json();
 
-    displayResults(result);
+    // If parts modal is open, populate search field instead of adding repairs
+    if (isPartsModalOpen) {
+      const searchTerm = result.transcription || text || '';
+      partsSearchInput.value = searchTerm;
+      partsSearchInput.dispatchEvent(new Event('input'));
+      showStatus(`Searching for: "${searchTerm}"`, 'success');
+    } else {
+      displayResults(result);
+    }
 
   } catch (error) {
     console.error('Error submitting:', error);
