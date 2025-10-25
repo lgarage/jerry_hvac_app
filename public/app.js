@@ -274,8 +274,8 @@ function displayResults(result) {
   }
 
   if (result.repairs && result.repairs.length > 0) {
-    // Store repairs in memory
-    currentRepairs = result.repairs;
+    // APPEND new repairs to existing ones instead of replacing
+    currentRepairs.push(...result.repairs);
     renderRepairs();
 
     resultsSection.classList.add('visible');
@@ -283,6 +283,11 @@ function displayResults(result) {
     setTimeout(() => {
       resultsSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }, 100);
+
+    // Clear the input after successful parse
+    jobNotesTextarea.value = '';
+
+    showStatus(`Added ${result.repairs.length} new repair(s)! Total: ${currentRepairs.length}`, 'success');
   } else {
     showStatus('No repairs were identified in the notes.', 'error');
   }
