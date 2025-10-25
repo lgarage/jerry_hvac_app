@@ -46,39 +46,135 @@ app.post('/api/parse', async (req, res) => {
   }
 });
 
-// Normalize common HVAC terminology after transcription
-function normalizeHVACTerms(text) {
+// Normalize HVAC terminology using semantic search against terminology database
+async function normalizeHVACTerms(text) {
   if (!text) return text;
 
-  let normalized = text;
+  try {
+    console.log('\n🔍 Normalizing HVAC terminology...');
 
-  // Refrigerant patterns (R410A, R-410A, R22, etc.)
-  normalized = normalized.replace(/\bR[\s-]?4[\s-]?10\b/gi, 'R-410A');
-  normalized = normalized.replace(/\bR[\s-]?410[\s-]?A?\b/gi, 'R-410A');
-  normalized = normalized.replace(/\bR[\s-]?22\b/gi, 'R-22');
-  normalized = normalized.replace(/\bR[\s-]?134[\s-]?A?\b/gi, 'R-134A');
-  normalized = normalized.replace(/\bR[\s-]?404[\s-]?A?\b/gi, 'R-404A');
-  normalized = normalized.replace(/\bR[\s-]?407[\s-]?C?\b/gi, 'R-407C');
-  normalized = normalized.replace(/\bR[\s-]?32\b/gi, 'R-32');
+    // Extract candidate phrases (n-grams from 1-4 words)
+    const words = text.split(/\s+/);
+    const candidates = new Set();
 
-  // Common HVAC equipment abbreviations
-  normalized = normalized.replace(/\bRTU[\s-]?(\d+)\b/gi, 'RTU-$1');
-  normalized = normalized.replace(/\bAHU[\s-]?(\d+)\b/gi, 'AHU-$1');
-  normalized = normalized.replace(/\bFCU[\s-]?(\d+)\b/gi, 'FCU-$1');
-  normalized = normalized.replace(/\bMAU[\s-]?(\d+)\b/gi, 'MAU-$1');
+    // Generate n-grams (phrases of 1-4 words)
+    for (let n = 1; n <= 4; n++) {
+      for (let i = 0; i <= words.length - n; i++) {
+        const phrase = words.slice(i, i + n).join(' ');
+        // Only add phrases that might be technical terms (contain letters or numbers)
+        if (/[a-zA-Z0-9]/.test(phrase) && phrase.length > 1) {
+          candidates.add({
+            phrase: phrase,
+            startIndex: text.toLowerCase().indexOf(phrase.toLowerCase()),
+            length: phrase.length
+          });
+        }
+      }
+    }
 
-  // Common unit conversions
-  normalized = normalized.replace(/\b(\d+)\s*lb\b/gi, '$1 lbs');
-  normalized = normalized.replace(/\b(\d+)\s*pound/gi, '$1 lbs');
+    // Convert to array and sort by length (longest first) to handle overlapping matches
+    const sortedCandidates = Array.from(candidates).sort((a, b) => b.length - a.length);
 
-  // Voltage patterns
-  normalized = normalized.replace(/\b24\s*v\b/gi, '24V');
-  normalized = normalized.replace(/\b120\s*v\b/gi, '120V');
-  normalized = normalized.replace(/\b240\s*v\b/gi, '240V');
-  normalized = normalized.replace(/\b208\s*v\b/gi, '208V');
-  normalized = normalized.replace(/\b480\s*v\b/gi, '480V');
+    // Find matches in terminology database
+    const replacements = [];
 
-  return normalized;
+    for (const candidate of sortedCandidates) {
+      try {
+        // Generate embedding for the candidate phrase
+        const embeddingResponse = await openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: candidate.phrase,
+        });
+
+        const queryEmbedding = embeddingResponse.data[0].embedding;
+        const embeddingStr = JSON.stringify(queryEmbedding);
+
+        // Search terminology database
+        const results = await sql`
+          SELECT
+            standard_term,
+            category,
+            variations,
+            1 - (embedding <=> ${embeddingStr}::vector(1536)) AS similarity
+          FROM hvac_terminology
+          ORDER BY embedding <=> ${embeddingStr}::vector(1536)
+          LIMIT 1
+        `;
+
+        // If we have a strong match (>70% similarity), consider it
+        if (results.length > 0 && results[0].similarity > 0.70) {
+          const match = results[0];
+
+          // Also check if the phrase is in the variations array (exact match gets priority)
+          const isExactVariation = match.variations.some(v =>
+            v.toLowerCase() === candidate.phrase.toLowerCase()
+          );
+
+          const finalSimilarity = isExactVariation ? 1.0 : match.similarity;
+
+          if (finalSimilarity > 0.70) {
+            replacements.push({
+              original: candidate.phrase,
+              replacement: match.standard_term,
+              category: match.category,
+              similarity: finalSimilarity,
+              startIndex: candidate.startIndex
+            });
+          }
+        }
+
+      } catch (error) {
+        // Skip this candidate if embedding fails
+        console.error(`  Error processing "${candidate.phrase}":`, error.message);
+      }
+    }
+
+    // Sort replacements by start index (reverse order) to avoid index shifting
+    replacements.sort((a, b) => b.startIndex - a.startIndex);
+
+    // Remove overlapping replacements (keep the longest/best match)
+    const finalReplacements = [];
+    const usedRanges = new Set();
+
+    for (const replacement of replacements.sort((a, b) => b.similarity - a.similarity)) {
+      const endIndex = replacement.startIndex + replacement.original.length;
+      let hasOverlap = false;
+
+      for (let i = replacement.startIndex; i < endIndex; i++) {
+        if (usedRanges.has(i)) {
+          hasOverlap = true;
+          break;
+        }
+      }
+
+      if (!hasOverlap) {
+        finalReplacements.push(replacement);
+        for (let i = replacement.startIndex; i < endIndex; i++) {
+          usedRanges.add(i);
+        }
+      }
+    }
+
+    // Apply replacements
+    let normalized = text;
+    for (const replacement of finalReplacements.sort((a, b) => b.startIndex - a.startIndex)) {
+      const regex = new RegExp(replacement.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      normalized = normalized.replace(regex, replacement.replacement);
+
+      console.log(`  ✓ "${replacement.original}" → "${replacement.replacement}" (${(replacement.similarity * 100).toFixed(0)}% match, ${replacement.category})`);
+    }
+
+    if (finalReplacements.length === 0) {
+      console.log('  No terminology matches found');
+    }
+
+    return normalized;
+
+  } catch (error) {
+    console.error('❌ Terminology normalization failed:', error.message);
+    // Return original text if normalization fails
+    return text;
+  }
 }
 
 async function transcribeAudio(base64Audio) {
@@ -99,11 +195,11 @@ async function transcribeAudio(base64Audio) {
     });
 
     const rawText = transcription.text || '';
-    const normalizedText = normalizeHVACTerms(rawText);
+    const normalizedText = await normalizeHVACTerms(rawText);
 
     console.log('Raw transcription:', rawText);
     if (rawText !== normalizedText) {
-      console.log('Normalized to:', normalizedText);
+      console.log('Normalized transcription:', normalizedText);
     }
 
     return normalizedText;
