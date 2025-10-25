@@ -32,9 +32,16 @@
       }
 
       .header {
-        text-align: center;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         margin-bottom: 30px;
         color: white;
+      }
+
+      .header > div {
+        text-align: center;
+        flex: 1;
       }
 
       .header h1 {
@@ -729,8 +736,11 @@
   <body>
     <div class="container">
       <div class="header">
-        <h1>Jerry HVAC</h1>
-        <p>AI-Powered HVAC Documentation</p>
+        <div>
+          <h1>Jerry HVAC</h1>
+          <p>AI-Powered HVAC Documentation</p>
+        </div>
+        <a href="/admin.html" style="background: white; color: #667eea; border: 2px solid #667eea; padding: 10px 16px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; display: inline-block;">⚙️ Manage Terms</a>
       </div>
 
       <div class="card">

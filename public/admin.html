@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HVAC Terminology Admin - Jerry HVAC</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .header {
+      background: white;
+      padding: 24px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header h1 {
+      color: #1f2937;
+      font-size: 1.8rem;
+    }
+
+    .header p {
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    .back-btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .back-btn:hover {
+      background: #5568d3;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      margin-bottom: 20px;
+    }
+
+    .card h2 {
+      color: #1f2937;
+      margin-bottom: 16px;
+      font-size: 1.3rem;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 6px;
+      font-size: 0.9rem;
+    }
+
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .form-group textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .form-hint {
+      font-size: 0.85rem;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    .btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      font-size: 0.95rem;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #5568d3;
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: #e5e7eb;
+      color: #374151;
+    }
+
+    .btn-secondary:hover {
+      background: #d1d5db;
+    }
+
+    .btn-danger {
+      background: #ef4444;
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+
+    .btn-edit {
+      background: #10b981;
+      color: white;
+      padding: 6px 12px;
+      font-size: 0.85rem;
+    }
+
+    .btn-edit:hover {
+      background: #059669;
+    }
+
+    .status-message {
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    .status-message.visible {
+      display: block;
+    }
+
+    .status-success {
+      background: #d1fae5;
+      color: #065f46;
+      border-left: 4px solid #10b981;
+    }
+
+    .status-error {
+      background: #fee2e2;
+      color: #991b1b;
+      border-left: 4px solid #ef4444;
+    }
+
+    .terms-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .term-item {
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 16px;
+      transition: all 0.2s;
+    }
+
+    .term-item:hover {
+      border-color: #667eea;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+
+    .term-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 8px;
+    }
+
+    .term-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #1f2937;
+    }
+
+    .term-category {
+      display: inline-block;
+      background: #667eea;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-left: 8px;
+    }
+
+    .term-description {
+      color: #6b7280;
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+    }
+
+    .term-variations {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .variation-badge {
+      background: #f3f4f6;
+      color: #4b5563;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+
+    .term-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .filter-section {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .filter-section select {
+      flex: 1;
+      min-width: 200px;
+      padding: 8px 12px;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .stat-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 16px;
+      border-radius: 8px;
+      text-align: center;
+    }
+
+    .stat-number {
+      font-size: 2rem;
+      font-weight: 700;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      opacity: 0.9;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #6b7280;
+    }
+
+    @media (max-width: 640px) {
+      .header {
+        flex-direction: column;
+        align-items: start;
+        gap: 12px;
+      }
+
+      .term-header {
+        flex-direction: column;
+        align-items: start;
+        gap: 8px;
+      }
+
+      .term-actions {
+        width: 100%;
+      }
+
+      .term-actions button {
+        flex: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>HVAC Terminology Manager</h1>
+        <p>Add and manage HVAC terminology for voice recognition</p>
+      </div>
+      <a href="/" class="back-btn">← Back to Main</a>
+    </div>
+
+    <div id="statusMessage" class="status-message"></div>
+
+    <!-- Add New Term Form -->
+    <div class="card">
+      <h2>Add New Term</h2>
+      <form id="addTermForm">
+        <div class="form-group">
+          <label for="standardTerm">Standard Term *</label>
+          <input type="text" id="standardTerm" placeholder="e.g., R-410A" required>
+          <div class="form-hint">The correct way to write this term</div>
+        </div>
+
+        <div class="form-group">
+          <label for="category">Category *</label>
+          <select id="category" required>
+            <option value="">Select a category...</option>
+            <option value="refrigerant">Refrigerant</option>
+            <option value="equipment">Equipment</option>
+            <option value="voltage">Voltage</option>
+            <option value="measurement">Measurement</option>
+            <option value="part_type">Part Type</option>
+            <option value="action">Action</option>
+            <option value="brand">Brand</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="variations">Variations * (one per line)</label>
+          <textarea id="variations" placeholder="R410A&#10;R410&#10;R 410&#10;four ten&#10;410A" required></textarea>
+          <div class="form-hint">Enter all ways this might be said or misspelled</div>
+        </div>
+
+        <div class="form-group">
+          <label for="description">Description (optional)</label>
+          <textarea id="description" placeholder="e.g., R-410A refrigerant, common in modern HVAC systems" rows="2"></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Add Term</button>
+        <button type="button" id="cancelEdit" class="btn btn-secondary" style="display: none;">Cancel Edit</button>
+      </form>
+    </div>
+
+    <!-- Existing Terms -->
+    <div class="card">
+      <h2>Existing Terms</h2>
+
+      <!-- Stats -->
+      <div id="stats" class="stats"></div>
+
+      <!-- Filters -->
+      <div class="filter-section">
+        <select id="categoryFilter">
+          <option value="">All Categories</option>
+        </select>
+        <button id="refreshBtn" class="btn btn-secondary">🔄 Refresh</button>
+      </div>
+
+      <!-- Terms List -->
+      <div id="termsList" class="loading">Loading terms...</div>
+    </div>
+  </div>
+
+  <script>
+    let editingTermId = null;
+
+    const statusMessage = document.getElementById('statusMessage');
+    const addTermForm = document.getElementById('addTermForm');
+    const cancelEditBtn = document.getElementById('cancelEdit');
+    const termsList = document.getElementById('termsList');
+    const categoryFilter = document.getElementById('categoryFilter');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const stats = document.getElementById('stats');
+
+    function showStatus(message, type = 'success') {
+      statusMessage.textContent = message;
+      statusMessage.className = `status-message status-${type} visible`;
+      setTimeout(() => {
+        statusMessage.classList.remove('visible');
+      }, 5000);
+    }
+
+    async function loadCategories() {
+      try {
+        const response = await fetch('/api/terminology/categories');
+        const data = await response.json();
+
+        categoryFilter.innerHTML = '<option value="">All Categories</option>';
+
+        data.categories.forEach(cat => {
+          const option = document.createElement('option');
+          option.value = cat.category;
+          option.textContent = `${cat.category} (${cat.count})`;
+          categoryFilter.appendChild(option);
+        });
+
+        // Update stats
+        const totalTerms = data.categories.reduce((sum, cat) => sum + parseInt(cat.count), 0);
+        stats.innerHTML = `
+          <div class="stat-card">
+            <div class="stat-number">${totalTerms}</div>
+            <div class="stat-label">Total Terms</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">${data.categories.length}</div>
+            <div class="stat-label">Categories</div>
+          </div>
+        `;
+
+      } catch (error) {
+        console.error('Error loading categories:', error);
+      }
+    }
+
+    async function loadTerms(category = '') {
+      try {
+        termsList.innerHTML = '<div class="loading">Loading terms...</div>';
+
+        const url = category ? `/api/terminology?category=${encodeURIComponent(category)}` : '/api/terminology';
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.terms.length === 0) {
+          termsList.innerHTML = '<div class="loading">No terms found. Add your first term above!</div>';
+          return;
+        }
+
+        termsList.innerHTML = '';
+
+        data.terms.forEach(term => {
+          const termItem = document.createElement('div');
+          termItem.className = 'term-item';
+
+          termItem.innerHTML = `
+            <div class="term-header">
+              <div>
+                <span class="term-title">${term.standard_term}</span>
+                <span class="term-category">${term.category}</span>
+              </div>
+              <div class="term-actions">
+                <button class="btn btn-edit" onclick="editTerm(${term.id})">Edit</button>
+                <button class="btn btn-danger" style="padding: 6px 12px; font-size: 0.85rem;" onclick="deleteTerm(${term.id}, '${term.standard_term}')">Delete</button>
+              </div>
+            </div>
+            ${term.description ? `<div class="term-description">${term.description}</div>` : ''}
+            <div class="term-variations">
+              ${term.variations.map(v => `<span class="variation-badge">${v}</span>`).join('')}
+            </div>
+          `;
+
+          termsList.appendChild(termItem);
+        });
+
+      } catch (error) {
+        console.error('Error loading terms:', error);
+        termsList.innerHTML = '<div class="loading">Error loading terms. Please try again.</div>';
+      }
+    }
+
+    addTermForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const standardTerm = document.getElementById('standardTerm').value.trim();
+      const category = document.getElementById('category').value;
+      const variationsText = document.getElementById('variations').value.trim();
+      const description = document.getElementById('description').value.trim();
+
+      if (!standardTerm || !category || !variationsText) {
+        showStatus('Please fill in all required fields', 'error');
+        return;
+      }
+
+      const variations = variationsText.split('\n')
+        .map(v => v.trim())
+        .filter(v => v);
+
+      if (variations.length === 0) {
+        showStatus('Please add at least one variation', 'error');
+        return;
+      }
+
+      try {
+        let response;
+        if (editingTermId) {
+          // Update existing term
+          response = await fetch(`/api/terminology/${editingTermId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ standard_term: standardTerm, category, variations, description })
+          });
+        } else {
+          // Add new term
+          response = await fetch('/api/terminology', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ standard_term: standardTerm, category, variations, description })
+          });
+        }
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to save term');
+        }
+
+        showStatus(editingTermId ? `Updated "${standardTerm}" successfully!` : `Added "${standardTerm}" successfully!`, 'success');
+
+        // Reset form
+        addTermForm.reset();
+        editingTermId = null;
+        cancelEditBtn.style.display = 'none';
+
+        // Reload data
+        await loadCategories();
+        await loadTerms(categoryFilter.value);
+
+      } catch (error) {
+        console.error('Error saving term:', error);
+        showStatus(error.message, 'error');
+      }
+    });
+
+    window.editTerm = async (id) => {
+      try {
+        const response = await fetch('/api/terminology');
+        const data = await response.json();
+        const term = data.terms.find(t => t.id === id);
+
+        if (!term) {
+          showStatus('Term not found', 'error');
+          return;
+        }
+
+        // Populate form
+        document.getElementById('standardTerm').value = term.standard_term;
+        document.getElementById('category').value = term.category;
+        document.getElementById('variations').value = term.variations.join('\n');
+        document.getElementById('description').value = term.description || '';
+
+        editingTermId = id;
+        cancelEditBtn.style.display = 'inline-block';
+
+        // Scroll to form
+        addTermForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      } catch (error) {
+        console.error('Error loading term for edit:', error);
+        showStatus('Failed to load term', 'error');
+      }
+    };
+
+    cancelEditBtn.addEventListener('click', () => {
+      addTermForm.reset();
+      editingTermId = null;
+      cancelEditBtn.style.display = 'none';
+    });
+
+    window.deleteTerm = async (id, name) => {
+      if (!confirm(`Are you sure you want to delete "${name}"?`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/terminology/${id}`, {
+          method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to delete term');
+        }
+
+        showStatus(`Deleted "${name}" successfully!`, 'success');
+
+        // Reload data
+        await loadCategories();
+        await loadTerms(categoryFilter.value);
+
+      } catch (error) {
+        console.error('Error deleting term:', error);
+        showStatus(error.message, 'error');
+      }
+    };
+
+    categoryFilter.addEventListener('change', () => {
+      loadTerms(categoryFilter.value);
+    });
+
+    refreshBtn.addEventListener('click', async () => {
+      await loadCategories();
+      await loadTerms(categoryFilter.value);
+      showStatus('Refreshed!', 'success');
+    });
+
+    // Initial load
+    loadCategories();
+    loadTerms();
+  </script>
+</body>
+</html>

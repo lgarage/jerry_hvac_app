@@ -556,6 +556,196 @@ app.get('/api/parts/categories', async (req, res) => {
   }
 });
 
+// Terminology Management Endpoints
+
+// Get all terminology
+app.get('/api/terminology', async (req, res) => {
+  try {
+    const { category } = req.query;
+
+    let terms;
+    if (category) {
+      terms = await sql`
+        SELECT id, standard_term, category, variations, description, created_at
+        FROM hvac_terminology
+        WHERE category = ${category}
+        ORDER BY standard_term
+      `;
+    } else {
+      terms = await sql`
+        SELECT id, standard_term, category, variations, description, created_at
+        FROM hvac_terminology
+        ORDER BY category, standard_term
+      `;
+    }
+
+    res.json({ terms });
+
+  } catch (error) {
+    console.error('Error fetching terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get terminology categories
+app.get('/api/terminology/categories', async (req, res) => {
+  try {
+    const categories = await sql`
+      SELECT category, COUNT(*) as count
+      FROM hvac_terminology
+      GROUP BY category
+      ORDER BY category
+    `;
+
+    res.json({ categories });
+
+  } catch (error) {
+    console.error('Error fetching terminology categories:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add new terminology
+app.post('/api/terminology', async (req, res) => {
+  try {
+    const { standard_term, category, variations, description } = req.body;
+
+    if (!standard_term || !category || !variations || variations.length === 0) {
+      return res.status(400).json({ error: 'standard_term, category, and variations are required' });
+    }
+
+    // Create comprehensive embedding text
+    const embeddingText = [
+      standard_term,
+      ...variations,
+      description || ''
+    ].join(' ');
+
+    // Generate embedding
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: embeddingText,
+    });
+
+    const embedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(embedding);
+
+    // Insert into database
+    const result = await sql`
+      INSERT INTO hvac_terminology (
+        standard_term,
+        category,
+        variations,
+        description,
+        embedding
+      ) VALUES (
+        ${standard_term},
+        ${category},
+        ${variations},
+        ${description || ''},
+        ${embeddingStr}::vector(1536)
+      )
+      RETURNING id, standard_term, category, variations, description, created_at
+    `;
+
+    console.log(`✓ Added new term: ${standard_term} (${category})`);
+
+    res.json({
+      success: true,
+      term: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error adding terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update terminology
+app.put('/api/terminology/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { standard_term, category, variations, description } = req.body;
+
+    if (!standard_term || !category || !variations || variations.length === 0) {
+      return res.status(400).json({ error: 'standard_term, category, and variations are required' });
+    }
+
+    // Create comprehensive embedding text
+    const embeddingText = [
+      standard_term,
+      ...variations,
+      description || ''
+    ].join(' ');
+
+    // Generate new embedding
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: embeddingText,
+    });
+
+    const embedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(embedding);
+
+    // Update in database
+    const result = await sql`
+      UPDATE hvac_terminology
+      SET
+        standard_term = ${standard_term},
+        category = ${category},
+        variations = ${variations},
+        description = ${description || ''},
+        embedding = ${embeddingStr}::vector(1536),
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING id, standard_term, category, variations, description, updated_at
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Term not found' });
+    }
+
+    console.log(`✓ Updated term: ${standard_term} (${category})`);
+
+    res.json({
+      success: true,
+      term: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error updating terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete terminology
+app.delete('/api/terminology/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await sql`
+      DELETE FROM hvac_terminology
+      WHERE id = ${id}
+      RETURNING standard_term, category
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Term not found' });
+    }
+
+    console.log(`✓ Deleted term: ${result[0].standard_term} (${result[0].category})`);
+
+    res.json({
+      success: true,
+      deleted: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error deleting terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Dave Mode server running on http://localhost:${PORT}`);
   console.log(`Configured with OpenAI: ${!!process.env.OPENAI_API_KEY}`);
