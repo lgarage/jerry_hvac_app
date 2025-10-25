@@ -887,6 +887,164 @@ app.get('/api/parts/categories', async (req, res) => {
   }
 });
 
+// Get all parts (for parts manager)
+app.get('/api/parts/all', async (req, res) => {
+  try {
+    const parts = await sql`
+      SELECT id, part_number, name, description, category, type, price, thumbnail_url, common_uses, created_at
+      FROM parts
+      ORDER BY category, name
+    `;
+
+    res.json(parts);
+
+  } catch (error) {
+    console.error('Error fetching all parts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add new part
+app.post('/api/parts', async (req, res) => {
+  try {
+    const { part_number, name, description, category, type, price, thumbnail_url, common_uses } = req.body;
+
+    if (!part_number || !name || !category || !type || price === undefined) {
+      return res.status(400).json({ error: 'part_number, name, category, type, and price are required' });
+    }
+
+    // Generate embedding for the part
+    const embeddingText = [name, description || '', category].join(' ');
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: embeddingText,
+    });
+
+    const embedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(embedding);
+
+    // Insert into database
+    const result = await sql`
+      INSERT INTO parts (
+        part_number,
+        name,
+        description,
+        category,
+        type,
+        price,
+        thumbnail_url,
+        common_uses,
+        embedding
+      ) VALUES (
+        ${part_number},
+        ${name},
+        ${description || ''},
+        ${category},
+        ${type},
+        ${parseFloat(price)},
+        ${thumbnail_url || ''},
+        ${common_uses || []},
+        ${embeddingStr}::vector(1536)
+      )
+      RETURNING id, part_number, name, category, type, price
+    `;
+
+    console.log(`✓ Added new part: ${name} (${part_number})`);
+
+    res.json({
+      success: true,
+      part: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error adding part:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update existing part
+app.put('/api/parts/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { part_number, name, description, category, type, price, thumbnail_url, common_uses } = req.body;
+
+    if (!part_number || !name || !category || !type || price === undefined) {
+      return res.status(400).json({ error: 'part_number, name, category, type, and price are required' });
+    }
+
+    // Regenerate embedding for the updated part
+    const embeddingText = [name, description || '', category].join(' ');
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: embeddingText,
+    });
+
+    const embedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(embedding);
+
+    // Update in database
+    const result = await sql`
+      UPDATE parts
+      SET
+        part_number = ${part_number},
+        name = ${name},
+        description = ${description || ''},
+        category = ${category},
+        type = ${type},
+        price = ${parseFloat(price)},
+        thumbnail_url = ${thumbnail_url || ''},
+        common_uses = ${common_uses || []},
+        embedding = ${embeddingStr}::vector(1536),
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING id, part_number, name, category, type, price
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Part not found' });
+    }
+
+    console.log(`✓ Updated part: ${name} (${part_number})`);
+
+    res.json({
+      success: true,
+      part: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error updating part:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete part
+app.delete('/api/parts/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await sql`
+      DELETE FROM parts
+      WHERE id = ${id}
+      RETURNING part_number, name
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Part not found' });
+    }
+
+    console.log(`✓ Deleted part: ${result[0].name} (${result[0].part_number})`);
+
+    res.json({
+      success: true,
+      deleted: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error deleting part:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Terminology Management Endpoints
 
 // Confirm and save a terminology variation

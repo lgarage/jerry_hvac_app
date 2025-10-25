@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manage Parts - Jerry HVAC</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .parts-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .parts-header h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      color: #1f2937;
+    }
+
+    .header-buttons {
+      display: flex;
+      gap: 12px;
+    }
+
+    .search-filter-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      flex: 1;
+      min-width: 250px;
+      padding: 10px 16px;
+      border: 2px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 0.95rem;
+    }
+
+    .filter-select {
+      padding: 10px 16px;
+      border: 2px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      min-width: 150px;
+    }
+
+    .parts-table {
+      width: 100%;
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .parts-table table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .parts-table th {
+      background: #f3f4f6;
+      padding: 14px 16px;
+      text-align: left;
+      font-weight: 600;
+      color: #374151;
+      border-bottom: 2px solid #e5e7eb;
+      font-size: 0.9rem;
+    }
+
+    .parts-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid #e5e7eb;
+      font-size: 0.9rem;
+      color: #1f2937;
+    }
+
+    .parts-table tr:hover {
+      background: #f9fafb;
+    }
+
+    .parts-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .part-type-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .part-type-consumable {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+
+    .part-type-inventory {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-icon {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .btn-edit {
+      background: #3b82f6;
+      color: white;
+    }
+
+    .btn-edit:hover {
+      background: #2563eb;
+    }
+
+    .btn-delete {
+      background: #ef4444;
+      color: white;
+    }
+
+    .btn-delete:hover {
+      background: #dc2626;
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .modal.visible {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-content {
+      background: white;
+      border-radius: 16px;
+      padding: 28px;
+      max-width: 600px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    .modal-header h2 {
+      margin: 0;
+      font-size: 1.5rem;
+      color: #1f2937;
+    }
+
+    .close-modal {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      color: #6b7280;
+      cursor: pointer;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+    }
+
+    .close-modal:hover {
+      background: #f3f4f6;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #374151;
+      font-size: 0.9rem;
+    }
+
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+      width: 100%;
+      padding: 10px 14px;
+      border: 2px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-family: inherit;
+    }
+
+    .form-group textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: #3b82f6;
+    }
+
+    .radio-group {
+      display: flex;
+      gap: 20px;
+    }
+
+    .radio-group label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: normal;
+      cursor: pointer;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .btn-cancel {
+      background: #e5e7eb;
+      color: #374151;
+    }
+
+    .btn-cancel:hover {
+      background: #d1d5db;
+    }
+
+    .btn-save {
+      background: #10b981;
+      color: white;
+    }
+
+    .btn-save:hover {
+      background: #059669;
+    }
+
+    .terminology-matches {
+      background: #f0fdf4;
+      border: 2px solid #10b981;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 16px;
+    }
+
+    .terminology-matches h4 {
+      margin: 0 0 8px 0;
+      color: #10b981;
+      font-size: 0.9rem;
+    }
+
+    .terminology-matches ul {
+      margin: 0;
+      padding-left: 20px;
+      color: #374151;
+      font-size: 0.85rem;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #6b7280;
+    }
+
+    .empty-state svg {
+      width: 80px;
+      height: 80px;
+      margin-bottom: 16px;
+      opacity: 0.5;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #6b7280;
+      font-size: 1.1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="parts-header">
+      <h1>📦 Parts Catalog</h1>
+      <div class="header-buttons">
+        <button class="btn-secondary" onclick="window.location.href='/'">← Back to Home</button>
+        <button class="btn-primary" onclick="showAddPartModal()">+ Add New Part</button>
+      </div>
+    </div>
+
+    <div id="statusMessage" class="status-message hidden"></div>
+
+    <div class="search-filter-bar">
+      <input type="text" class="search-box" id="searchBox" placeholder="🔍 Search parts by name, part number, or description...">
+      <select class="filter-select" id="categoryFilter">
+        <option value="">All Categories</option>
+      </select>
+      <select class="filter-select" id="typeFilter">
+        <option value="">All Types</option>
+        <option value="consumable">Consumable</option>
+        <option value="inventory">Inventory</option>
+      </select>
+    </div>
+
+    <div id="partsTableContainer" class="loading">
+      Loading parts...
+    </div>
+  </div>
+
+  <!-- Add/Edit Part Modal -->
+  <div id="partModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modalTitle">Add New Part</h2>
+        <button class="close-modal" onclick="hidePartModal()">×</button>
+      </div>
+
+      <form id="partForm">
+        <input type="hidden" id="partId">
+
+        <div class="form-group">
+          <label for="partNumber">Part Number *</label>
+          <input type="text" id="partNumber" required placeholder="e.g., R410A-LB">
+        </div>
+
+        <div class="form-group">
+          <label for="partName">Name *</label>
+          <input type="text" id="partName" required placeholder="e.g., R-410A Refrigerant (per lb)">
+        </div>
+
+        <div class="form-group">
+          <label for="partDescription">Description</label>
+          <textarea id="partDescription" placeholder="Detailed description of the part..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="partCategory">Category *</label>
+          <select id="partCategory" required>
+            <option value="">Select Category</option>
+            <option value="Refrigerant">Refrigerant</option>
+            <option value="Electrical">Electrical</option>
+            <option value="Controls">Controls</option>
+            <option value="Filters">Filters</option>
+            <option value="Supplies">Supplies</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Type *</label>
+          <div class="radio-group">
+            <label>
+              <input type="radio" name="partType" value="consumable" required>
+              Consumable
+            </label>
+            <label>
+              <input type="radio" name="partType" value="inventory" required>
+              Inventory
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="partPrice">Price ($) *</label>
+          <input type="number" id="partPrice" step="0.01" min="0" required placeholder="0.00">
+        </div>
+
+        <div id="terminologyMatchesSection" style="display: none;">
+          <div class="terminology-matches">
+            <h4>🔗 Terminology Matches</h4>
+            <ul id="terminologyMatchesList"></ul>
+            <p style="font-size: 0.8rem; color: #6b7280; margin: 8px 0 0 0;">Parts will be auto-matched when these terms are detected in voice input.</p>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-primary btn-cancel" onclick="hidePartModal()">Cancel</button>
+          <button type="submit" class="btn-primary btn-save">Save Part</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="manage-parts.js"></script>
+</body>
+</html>
