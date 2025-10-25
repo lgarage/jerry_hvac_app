@@ -449,7 +449,32 @@ function createRepairCard(repair, index) {
       typeBadge.style.fontSize = '0.7rem';
       typeBadge.style.marginLeft = '8px';
 
-      partInfo.innerHTML = `<strong>${part.name}</strong> ${typeBadge.outerHTML}<br><span style="font-size: 0.85rem; color: #10b981;">$${parseFloat(part.price).toFixed(2)} × ${part.quantity}</span>`;
+      const quantitySpan = document.createElement('span');
+      quantitySpan.style.fontSize = '0.85rem';
+      quantitySpan.style.color = '#10b981';
+      quantitySpan.style.cursor = 'pointer';
+      quantitySpan.style.textDecoration = 'underline';
+      quantitySpan.style.textDecorationStyle = 'dotted';
+      quantitySpan.title = 'Click to change quantity';
+      quantitySpan.textContent = `$${parseFloat(part.price).toFixed(2)} × ${part.quantity}`;
+      quantitySpan.addEventListener('click', () => {
+        const newQtyStr = prompt(`Change quantity for ${part.name}:`, part.quantity);
+        if (newQtyStr !== null) {
+          const newQty = parseInt(newQtyStr);
+          if (!isNaN(newQty) && newQty > 0) {
+            part.quantity = newQty;
+            renderRepairs();
+            showStatus(`Updated ${part.name} quantity to ${newQty}`, 'success');
+          } else if (newQty === 0) {
+            if (confirm(`Remove ${part.name} from this repair?`)) {
+              removePartFromRepair(index, part.part_number);
+            }
+          }
+        }
+      });
+
+      partInfo.innerHTML = `<strong>${part.name}</strong> ${typeBadge.outerHTML}<br>`;
+      partInfo.appendChild(quantitySpan);
 
       const removeBtn = document.createElement('button');
       removeBtn.className = 'btn-delete';
@@ -683,9 +708,25 @@ function addPartToRepair(part) {
   }
 
   // Check if part already added
-  const alreadyAdded = repair.selectedParts.some(p => p.part_number === part.part_number);
-  if (alreadyAdded) {
-    showStatus('This part is already added to this repair.', 'info');
+  const existingPart = repair.selectedParts.find(p => p.part_number === part.part_number);
+  if (existingPart) {
+    // Ask if they want to increase quantity
+    const increase = confirm(`${part.name} is already added.\n\nCurrent quantity: ${existingPart.quantity}\n\nClick OK to increase quantity by 1, or Cancel to keep as is.`);
+    if (increase) {
+      existingPart.quantity += 1;
+      renderRepairs();
+      showStatus(`Increased ${part.name} quantity to ${existingPart.quantity}`, 'success');
+    }
+    return;
+  }
+
+  // Ask for quantity
+  const quantityStr = prompt(`How many ${part.name}?`, '1');
+  if (quantityStr === null) return; // User cancelled
+
+  const quantity = parseInt(quantityStr);
+  if (isNaN(quantity) || quantity < 1) {
+    showStatus('Invalid quantity. Please enter a number greater than 0.', 'error');
     return;
   }
 
@@ -695,12 +736,12 @@ function addPartToRepair(part) {
     name: part.name,
     price: part.price,
     type: part.type,
-    quantity: 1
+    quantity: quantity
   });
 
   renderRepairs();
   hidePartsModal();
-  showStatus(`Added ${part.name} to repair!`, 'success');
+  showStatus(`Added ${quantity}x ${part.name} to repair!`, 'success');
 }
 
 function removePartFromRepair(repairIndex, partNumber) {
