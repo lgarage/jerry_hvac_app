@@ -3,6 +3,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const OpenAI = require('openai');
+const { sql } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -175,6 +176,143 @@ app.get('/api/submissions', (req, res) => {
     total: submittedRepairs.length,
     submissions: submittedRepairs
   });
+});
+
+// Parts Search Endpoints
+app.get('/api/parts/search', async (req, res) => {
+  try {
+    const { query, type, category, limit = 10 } = req.query;
+
+    if (!query) {
+      return res.status(400).json({ error: 'Query parameter is required' });
+    }
+
+    // Generate embedding for the search query
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: query,
+    });
+
+    const queryEmbedding = embeddingResponse.data[0].embedding;
+
+    // Build the search query with optional filters
+    let searchQuery = sql`
+      SELECT
+        id,
+        part_number,
+        name,
+        description,
+        category,
+        type,
+        price,
+        thumbnail_url,
+        common_uses,
+        1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)) AS similarity
+      FROM parts
+      WHERE 1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)) > 0.5
+    `;
+
+    // Add type filter if provided
+    if (type) {
+      searchQuery = sql`
+        ${searchQuery}
+        AND type = ${type}
+      `;
+    }
+
+    // Add category filter if provided
+    if (category) {
+      searchQuery = sql`
+        ${searchQuery}
+        AND category = ${category}
+      `;
+    }
+
+    // Complete the query with order and limit
+    const results = await sql`
+      ${searchQuery}
+      ORDER BY embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)
+      LIMIT ${parseInt(limit)}
+    `;
+
+    res.json({
+      query,
+      count: results.length,
+      parts: results
+    });
+
+  } catch (error) {
+    console.error('Parts search error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all parts by category
+app.get('/api/parts/category/:category', async (req, res) => {
+  try {
+    const { category } = req.params;
+
+    const parts = await sql`
+      SELECT * FROM parts
+      WHERE category = ${category}
+      ORDER BY name
+    `;
+
+    res.json({
+      category,
+      count: parts.length,
+      parts
+    });
+
+  } catch (error) {
+    console.error('Error fetching parts by category:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get consumables vs inventory
+app.get('/api/parts/type/:type', async (req, res) => {
+  try {
+    const { type } = req.params;
+
+    if (!['consumable', 'inventory'].includes(type)) {
+      return res.status(400).json({ error: 'Type must be "consumable" or "inventory"' });
+    }
+
+    const parts = await sql`
+      SELECT * FROM parts
+      WHERE type = ${type}
+      ORDER BY category, name
+    `;
+
+    res.json({
+      type,
+      count: parts.length,
+      parts
+    });
+
+  } catch (error) {
+    console.error('Error fetching parts by type:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all categories
+app.get('/api/parts/categories', async (req, res) => {
+  try {
+    const categories = await sql`
+      SELECT category, COUNT(*) as count
+      FROM parts
+      GROUP BY category
+      ORDER BY category
+    `;
+
+    res.json({ categories });
+
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.listen(PORT, () => {
