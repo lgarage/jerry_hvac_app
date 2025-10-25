@@ -46,6 +46,41 @@ app.post('/api/parse', async (req, res) => {
   }
 });
 
+// Normalize common HVAC terminology after transcription
+function normalizeHVACTerms(text) {
+  if (!text) return text;
+
+  let normalized = text;
+
+  // Refrigerant patterns (R410A, R-410A, R22, etc.)
+  normalized = normalized.replace(/\bR[\s-]?4[\s-]?10\b/gi, 'R-410A');
+  normalized = normalized.replace(/\bR[\s-]?410[\s-]?A?\b/gi, 'R-410A');
+  normalized = normalized.replace(/\bR[\s-]?22\b/gi, 'R-22');
+  normalized = normalized.replace(/\bR[\s-]?134[\s-]?A?\b/gi, 'R-134A');
+  normalized = normalized.replace(/\bR[\s-]?404[\s-]?A?\b/gi, 'R-404A');
+  normalized = normalized.replace(/\bR[\s-]?407[\s-]?C?\b/gi, 'R-407C');
+  normalized = normalized.replace(/\bR[\s-]?32\b/gi, 'R-32');
+
+  // Common HVAC equipment abbreviations
+  normalized = normalized.replace(/\bRTU[\s-]?(\d+)\b/gi, 'RTU-$1');
+  normalized = normalized.replace(/\bAHU[\s-]?(\d+)\b/gi, 'AHU-$1');
+  normalized = normalized.replace(/\bFCU[\s-]?(\d+)\b/gi, 'FCU-$1');
+  normalized = normalized.replace(/\bMAU[\s-]?(\d+)\b/gi, 'MAU-$1');
+
+  // Common unit conversions
+  normalized = normalized.replace(/\b(\d+)\s*lb\b/gi, '$1 lbs');
+  normalized = normalized.replace(/\b(\d+)\s*pound/gi, '$1 lbs');
+
+  // Voltage patterns
+  normalized = normalized.replace(/\b24\s*v\b/gi, '24V');
+  normalized = normalized.replace(/\b120\s*v\b/gi, '120V');
+  normalized = normalized.replace(/\b240\s*v\b/gi, '240V');
+  normalized = normalized.replace(/\b208\s*v\b/gi, '208V');
+  normalized = normalized.replace(/\b480\s*v\b/gi, '480V');
+
+  return normalized;
+}
+
 async function transcribeAudio(base64Audio) {
   try {
     if (!process.env.OPENAI_API_KEY) {
@@ -56,12 +91,22 @@ async function transcribeAudio(base64Audio) {
 
     const file = new File([audioBuffer], 'audio.wav', { type: 'audio/wav' });
 
+    // Add HVAC-specific context to improve transcription accuracy
     const transcription = await openai.audio.transcriptions.create({
       file: file,
-      model: 'whisper-1'
+      model: 'whisper-1',
+      prompt: 'HVAC technician documenting repairs. Common terms: R-410A, R-22, R-134A refrigerant, RTU, AHU, FCU, contactor, capacitor, compressor, condenser, evaporator, damper actuator, thermistor, TXV valve, leak check, subcool, superheat, micron, vacuum, CFM.'
     });
 
-    return transcription.text || '';
+    const rawText = transcription.text || '';
+    const normalizedText = normalizeHVACTerms(rawText);
+
+    console.log('Raw transcription:', rawText);
+    if (rawText !== normalizedText) {
+      console.log('Normalized to:', normalizedText);
+    }
+
+    return normalizedText;
 
   } catch (error) {
     console.error('Transcription error:', error);
@@ -73,10 +118,16 @@ async function parseRepairs(transcription) {
   try {
     const systemPrompt = `You are an HVAC repair documentation assistant. Parse the technician's notes into structured repair items.
 
+IMPORTANT: Use proper HVAC terminology:
+- Refrigerants: R-410A (not R410, R4-10, or 410A), R-22, R-134A, R-404A, R-407C, R-32
+- Equipment: RTU-1, AHU-2, FCU-3, MAU-1 (with dashes)
+- Voltages: 24V, 120V, 240V, 208V, 480V
+- Units: lbs (for pounds), CFM, tons, BTU
+
 Return a JSON array where each item has:
 - equipment: string (e.g., "RTU-1", "AHU-2")
 - problem: string (brief description)
-- parts: array of strings (parts needed)
+- parts: array of strings (parts needed, with proper formatting)
 - actions: array of strings (actions to take)
 - notes: string (additional context)
 
@@ -87,14 +138,14 @@ Example output:
   {
     "equipment": "RTU-1",
     "problem": "Low refrigerant",
-    "parts": ["4 lbs R410A"],
+    "parts": ["4 lbs R-410A"],
     "actions": ["Leak check", "Recharge"],
     "notes": ""
   },
   {
     "equipment": "RTU-1",
     "problem": "Broken economizer damper actuator",
-    "parts": ["Economizer actuator"],
+    "parts": ["Economizer damper actuator"],
     "actions": ["Replace actuator"],
     "notes": ""
   },
