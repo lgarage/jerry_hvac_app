@@ -449,32 +449,95 @@ function createRepairCard(repair, index) {
       typeBadge.style.fontSize = '0.7rem';
       typeBadge.style.marginLeft = '8px';
 
-      const quantitySpan = document.createElement('span');
-      quantitySpan.style.fontSize = '0.85rem';
-      quantitySpan.style.color = '#10b981';
-      quantitySpan.style.cursor = 'pointer';
-      quantitySpan.style.textDecoration = 'underline';
-      quantitySpan.style.textDecorationStyle = 'dotted';
-      quantitySpan.title = 'Click to change quantity';
-      quantitySpan.textContent = `$${parseFloat(part.price).toFixed(2)} × ${part.quantity}`;
-      quantitySpan.addEventListener('click', () => {
-        const newQtyStr = prompt(`Change quantity for ${part.name}:`, part.quantity);
-        if (newQtyStr !== null) {
-          const newQty = parseInt(newQtyStr);
-          if (!isNaN(newQty) && newQty > 0) {
-            part.quantity = newQty;
-            renderRepairs();
-            showStatus(`Updated ${part.name} quantity to ${newQty}`, 'success');
-          } else if (newQty === 0) {
-            if (confirm(`Remove ${part.name} from this repair?`)) {
-              removePartFromRepair(index, part.part_number);
-            }
+      partInfo.innerHTML = `<strong>${part.name}</strong> ${typeBadge.outerHTML}<br>`;
+
+      // Price display
+      const priceSpan = document.createElement('span');
+      priceSpan.style.fontSize = '0.85rem';
+      priceSpan.style.color = '#10b981';
+      priceSpan.style.marginRight = '8px';
+      priceSpan.textContent = `$${parseFloat(part.price).toFixed(2)} ×`;
+      partInfo.appendChild(priceSpan);
+
+      // Quantity controls container
+      const qtyControls = document.createElement('span');
+      qtyControls.style.display = 'inline-flex';
+      qtyControls.style.alignItems = 'center';
+      qtyControls.style.gap = '4px';
+
+      // Minus button
+      const minusBtn = document.createElement('button');
+      minusBtn.textContent = '−';
+      minusBtn.style.background = '#ef4444';
+      minusBtn.style.color = 'white';
+      minusBtn.style.border = 'none';
+      minusBtn.style.borderRadius = '4px';
+      minusBtn.style.width = '24px';
+      minusBtn.style.height = '24px';
+      minusBtn.style.cursor = 'pointer';
+      minusBtn.style.fontSize = '16px';
+      minusBtn.style.lineHeight = '1';
+      minusBtn.style.padding = '0';
+      minusBtn.addEventListener('click', () => {
+        if (part.quantity > 1) {
+          part.quantity -= 1;
+          renderRepairs();
+        } else {
+          if (confirm(`Remove ${part.name} from this repair?`)) {
+            removePartFromRepair(index, part.part_number);
           }
         }
       });
 
-      partInfo.innerHTML = `<strong>${part.name}</strong> ${typeBadge.outerHTML}<br>`;
-      partInfo.appendChild(quantitySpan);
+      // Quantity input
+      const qtyInput = document.createElement('input');
+      qtyInput.type = 'number';
+      qtyInput.min = '1';
+      qtyInput.value = part.quantity;
+      qtyInput.style.width = '50px';
+      qtyInput.style.textAlign = 'center';
+      qtyInput.style.border = '1px solid #d1d5db';
+      qtyInput.style.borderRadius = '4px';
+      qtyInput.style.padding = '4px';
+      qtyInput.style.fontSize = '0.85rem';
+      qtyInput.addEventListener('change', (e) => {
+        const newQty = parseInt(e.target.value);
+        if (!isNaN(newQty) && newQty > 0) {
+          part.quantity = newQty;
+          renderRepairs();
+        } else if (newQty === 0) {
+          if (confirm(`Remove ${part.name} from this repair?`)) {
+            removePartFromRepair(index, part.part_number);
+          } else {
+            e.target.value = part.quantity;
+          }
+        } else {
+          e.target.value = part.quantity;
+        }
+      });
+
+      // Plus button
+      const plusBtn = document.createElement('button');
+      plusBtn.textContent = '+';
+      plusBtn.style.background = '#10b981';
+      plusBtn.style.color = 'white';
+      plusBtn.style.border = 'none';
+      plusBtn.style.borderRadius = '4px';
+      plusBtn.style.width = '24px';
+      plusBtn.style.height = '24px';
+      plusBtn.style.cursor = 'pointer';
+      plusBtn.style.fontSize = '16px';
+      plusBtn.style.lineHeight = '1';
+      plusBtn.style.padding = '0';
+      plusBtn.addEventListener('click', () => {
+        part.quantity += 1;
+        renderRepairs();
+      });
+
+      qtyControls.appendChild(minusBtn);
+      qtyControls.appendChild(qtyInput);
+      qtyControls.appendChild(plusBtn);
+      partInfo.appendChild(qtyControls);
 
       const removeBtn = document.createElement('button');
       removeBtn.className = 'btn-delete';
@@ -710,38 +773,25 @@ function addPartToRepair(part) {
   // Check if part already added
   const existingPart = repair.selectedParts.find(p => p.part_number === part.part_number);
   if (existingPart) {
-    // Ask if they want to increase quantity
-    const increase = confirm(`${part.name} is already added.\n\nCurrent quantity: ${existingPart.quantity}\n\nClick OK to increase quantity by 1, or Cancel to keep as is.`);
-    if (increase) {
-      existingPart.quantity += 1;
-      renderRepairs();
-      showStatus(`Increased ${part.name} quantity to ${existingPart.quantity}`, 'success');
-    }
+    // Auto-increase quantity by 1
+    existingPart.quantity += 1;
+    renderRepairs();
+    showStatus(`Increased ${part.name} quantity to ${existingPart.quantity}`, 'success');
     return;
   }
 
-  // Ask for quantity
-  const quantityStr = prompt(`How many ${part.name}?`, '1');
-  if (quantityStr === null) return; // User cancelled
-
-  const quantity = parseInt(quantityStr);
-  if (isNaN(quantity) || quantity < 1) {
-    showStatus('Invalid quantity. Please enter a number greater than 0.', 'error');
-    return;
-  }
-
-  // Add part to repair
+  // Add part with default quantity of 1
   repair.selectedParts.push({
     part_number: part.part_number,
     name: part.name,
     price: part.price,
     type: part.type,
-    quantity: quantity
+    quantity: 1
   });
 
   renderRepairs();
   hidePartsModal();
-  showStatus(`Added ${quantity}x ${part.name} to repair!`, 'success');
+  showStatus(`Added ${part.name} to repair!`, 'success');
 }
 
 function removePartFromRepair(repairIndex, partNumber) {
