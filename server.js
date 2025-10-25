@@ -76,33 +76,37 @@ async function evaluateTerminologyMatches(matches) {
 
 Your job: Decide if terminology matches need user confirmation or can be auto-accepted.
 
-AUTO-ACCEPT if:
-- Only punctuation differences (e.g., "damper actuator." vs "damper actuator")
-- Only capitalization differences (e.g., "RTU" vs "rtu")
-- Obvious abbreviations (e.g., "lb" vs "lbs", "R410A" vs "R-410A")
-- High confidence matches (>85%) of clearly same terms
-- Formatting differences (e.g., "24 volt" vs "24V")
+AUTO-ACCEPT (no user confirmation needed) if ANY of these apply:
+1. IDENTICAL TERMS (e.g., "compressor" → "compressor") - even with low similarity score
+2. Only punctuation differences (e.g., "damper actuator." → "damper actuator")
+3. Only capitalization differences (e.g., "RTU" → "rtu")
+4. Only preposition/article removal (e.g., "of R-22" → "R-22", "a compressor" → "compressor")
+5. Obvious abbreviations (e.g., "lb" → "lbs", "R410A" → "R-410A")
+6. Formatting differences (e.g., "24 volt" → "24V", "four ten" → "410")
+7. High confidence (>85%) AND clearly same technical term
 
-REQUIRE CONFIRMATION if:
-- Ambiguous or could mean different things (e.g., "R-210" vs "RTU-10")
-- Low confidence (<75%) even if they look similar
-- Completely different technical meanings (e.g., "contactor" vs "capacitor")
-- User said something that could be multiple parts
+REQUIRE CONFIRMATION only if:
+1. Actually different words/concepts (e.g., "contactor" → "capacitor")
+2. Ambiguous transcription (e.g., "R-210" → "RTU-10")
+3. Low confidence (<70%) AND could be wrong term
+4. Multiple possible interpretations
 
-For each match, return:
+CRITICAL: If the original and suggested are the SAME WORD (ignoring case/punctuation), always auto-accept regardless of similarity score.
+
+Return a JSON object with "decisions" array. Each decision:
 {
   "needs_confirmation": boolean,
   "reason": "brief explanation",
   "auto_accept": boolean
 }
 
-Be generous with auto-accept for obvious matches. Only require confirmation for genuinely ambiguous cases.`;
+Be very generous with auto-accept. Err on the side of auto-accepting unless genuinely ambiguous.`;
 
     const matchDescriptions = matches.map((m, idx) =>
-      `Match ${idx + 1}: "${m.original}" → "${m.suggested}" (${(m.confidence * 100).toFixed(0)}% similarity, category: ${m.category})`
+      `Match ${idx + 1}: original="${m.original}" suggested="${m.suggested}" similarity=${(m.confidence * 100).toFixed(0)}% category=${m.category}`
     ).join('\n');
 
-    const userPrompt = `Evaluate these terminology matches:\n\n${matchDescriptions}\n\nReturn a JSON array with one decision object per match, in the same order.`;
+    const userPrompt = `Evaluate these terminology matches and return decisions:\n\n${matchDescriptions}\n\nReturn format: {"decisions": [{"needs_confirmation": bool, "reason": "...", "auto_accept": bool}, ...]}`;
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -110,21 +114,25 @@ Be generous with auto-accept for obvious matches. Only require confirmation for 
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      temperature: 0.1,
+      temperature: 0.0,
       response_format: { type: "json_object" }
     });
 
     const responseText = completion.choices[0].message.content.trim();
-    const result = JSON.parse(responseText);
+    console.log('  Agent 1 raw response:', responseText);
 
-    // Handle both array and object with decisions array
-    const decisions = Array.isArray(result) ? result : (result.decisions || result.matches || []);
+    const result = JSON.parse(responseText);
+    const decisions = result.decisions || [];
+
+    if (decisions.length !== matches.length) {
+      console.error(`  ⚠️  Agent 1 returned ${decisions.length} decisions for ${matches.length} matches`);
+    }
 
     decisions.forEach((decision, idx) => {
       const match = matches[idx];
       if (match) {
         const status = decision.needs_confirmation ? '❓ Needs confirmation' : '✅ Auto-accept';
-        console.log(`  ${status}: "${match.original}" → "${match.suggested}" (${decision.reason})`);
+        console.log(`  ${status}: "${match.original}" → "${match.suggested}" - ${decision.reason}`);
       }
     });
 
@@ -132,6 +140,7 @@ Be generous with auto-accept for obvious matches. Only require confirmation for 
 
   } catch (error) {
     console.error('❌ Agent 1 evaluation failed:', error.message);
+    console.error('   Stack:', error.stack);
     // Fallback: if agent fails, use conservative approach (require confirmation for <90%)
     return matches.map(m => ({
       needs_confirmation: m.confidence < 0.90,
