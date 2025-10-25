@@ -150,6 +150,93 @@ Be very generous with auto-accept. Err on the side of auto-accepting unless genu
   }
 }
 
+// Agent 2: Technical Term Detector
+// Uses GPT-4o-mini to intelligently filter sentence fragments from real technical terms
+async function filterTechnicalTerms(potentialTerms) {
+  if (!potentialTerms || potentialTerms.length === 0) return [];
+
+  try {
+    console.log('\n🤖 Agent 2: Filtering technical terms...');
+
+    const systemPrompt = `You are a technical term detection agent for an HVAC repair documentation system.
+
+Your job: Distinguish real HVAC technical terms from sentence fragments in voice transcriptions.
+
+ACCEPT as technical terms:
+1. HVAC equipment identifiers: "RTU-5", "AHU-2", "FCU-3", "MAU-1"
+2. Part specifications: "24V 3-pole contactor", "5-ton compressor", "3/4 HP motor"
+3. Refrigerant codes: "R-410A", "R-22", "R-134A"
+4. Technical components: "damper actuator", "TXV valve", "reversing valve"
+5. Voltage/electrical specs: "24V transformer", "40VA", "30 amp"
+6. Measurement terms: "subcool", "superheat", "CFM", "micron"
+
+REJECT as sentence fragments if ANY apply:
+1. Starts with conjunction: "and RTU-6", "but the compressor", "or maybe"
+2. Starts with preposition: "of R-22", "with the damper", "at the unit"
+3. Contains common verbs: "need 10 pounds", "think RTU-6", "will also need"
+4. Contains pronouns: "I think", "it needs", "that is"
+5. Incomplete phrase: "also need", "will also", "and then"
+6. Contains multiple sentence elements: "And then RTU-6 needs"
+7. Just quantity words: "10 pounds", "5 lbs", "4 units"
+
+CRITICAL: Real technical terms are NOUNS or NOUN PHRASES describing specific HVAC parts, equipment, or measurements.
+Sentence fragments contain VERBS, CONJUNCTIONS, PREPOSITIONS, or PRONOUNS.
+
+For each term, return:
+{
+  "is_technical_term": boolean,
+  "reason": "brief explanation"
+}
+
+Be strict - when in doubt, reject it. Only accept clean, standalone technical terms.`;
+
+    const termDescriptions = potentialTerms.map((term, idx) =>
+      `Term ${idx + 1}: "${term.phrase}" (closest match: ${term.bestMatch || 'none'} at ${Math.round(term.similarity * 100)}%)`
+    ).join('\n');
+
+    const userPrompt = `Evaluate these potential technical terms:\n\n${termDescriptions}\n\nReturn format: {"evaluations": [{"is_technical_term": bool, "reason": "..."}, ...]}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Agent 2 raw response:', responseText);
+
+    const result = JSON.parse(responseText);
+    const evaluations = result.evaluations || [];
+
+    if (evaluations.length !== potentialTerms.length) {
+      console.error(`  ⚠️  Agent 2 returned ${evaluations.length} evaluations for ${potentialTerms.length} terms`);
+    }
+
+    evaluations.forEach((evaluation, idx) => {
+      const term = potentialTerms[idx];
+      if (term) {
+        const status = evaluation.is_technical_term ? '✅ Technical term' : '❌ Sentence fragment';
+        console.log(`  ${status}: "${term.phrase}" - ${evaluation.reason}`);
+      }
+    });
+
+    return evaluations;
+
+  } catch (error) {
+    console.error('❌ Agent 2 evaluation failed:', error.message);
+    console.error('   Stack:', error.stack);
+    // Fallback: if agent fails, reject all to avoid showing garbage
+    return potentialTerms.map(t => ({
+      is_technical_term: false,
+      reason: 'Agent evaluation failed, rejecting for safety'
+    }));
+  }
+}
+
 // Normalize HVAC terminology using semantic search against terminology database
 async function normalizeHVACTerms(text) {
   if (!text) return { normalized: text, suggestions: [], newTerms: [] };
@@ -219,46 +306,15 @@ async function normalizeHVACTerms(text) {
         const bestMatch = results.length > 0 ? results[0] : null;
         const similarity = bestMatch ? bestMatch.similarity : 0;
 
-        // Check if this looks like a technical term that should be in glossary
-        // Must be a clean technical phrase, not a sentence fragment
-
-        // First, exclude phrases with sentence fragments
-        const excludeWords = [
-          // Common verbs that indicate sentence fragments
-          'replaced', 'needs', 'needing', 'along', 'that', 'this', 'these', 'those',
-          'was', 'were', 'been', 'being', 'have', 'has', 'had',
-          // Prepositions and conjunctions
-          'with', 'without', 'along', 'at', 'from', 'into', 'onto', 'upon'
-        ];
-
-        const phraseWords = candidate.phrase.toLowerCase().split(/\s+/);
-        const hasExcludedWord = excludeWords.some(word => phraseWords.includes(word));
-
-        // Exclude phrases with punctuation (sentence fragments)
-        const hasPunctuation = /[.,:;!?]/.test(candidate.phrase);
-
-        // Only consider it technical if it has technical indicators AND is clean
-        const hasTechnicalIndicators =
-          /\d/.test(candidate.phrase) || // Contains numbers (24V, R-410A, etc.)
-          /[A-Z]{2,}/.test(candidate.phrase) || // Has acronyms (RTU, AHU, etc.)
-          (candidate.phrase.includes('-') && /\d/.test(candidate.phrase)) || // Has hyphen with number
-          /\d+V\b/.test(candidate.phrase); // Voltage pattern (24V, 120V, etc.)
-
-        const looksTechnical =
-          hasTechnicalIndicators &&
-          !hasExcludedWord &&
-          !hasPunctuation &&
-          candidate.phrase.split(' ').length >= 2 && // Multi-word
-          candidate.phrase.split(' ').length <= 5; // But not too long (likely sentence)
-
-        // If similarity is low (<50%) and it looks technical, suggest adding to glossary
-        if (looksTechnical && similarity < 0.50) {
+        // Collect potential new terms with low similarity for Agent 2 to evaluate
+        // Agent 2 will intelligently filter sentence fragments from real technical terms
+        if (similarity < 0.50 && candidate.phrase.split(' ').length >= 2) {
           potentialNewTerms.push({
             phrase: candidate.phrase,
             bestMatch: bestMatch ? bestMatch.standard_term : null,
             similarity: similarity
           });
-          console.log(`  💡 Potential new term: "${candidate.phrase}" (best match: ${similarity > 0 ? (similarity * 100).toFixed(0) + '% - ' + bestMatch.standard_term : 'none'})`);
+          console.log(`  💡 Candidate for glossary: "${candidate.phrase}" (best match: ${similarity > 0 ? (similarity * 100).toFixed(0) + '% - ' + bestMatch.standard_term : 'none'})`);
         }
 
         // If we have a strong match (>70% similarity), use it
@@ -354,11 +410,22 @@ async function normalizeHVACTerms(text) {
 
     // Remove duplicate new terms and filter overlaps with replacements
     const usedPhrases = new Set(finalReplacements.map(r => r.original.toLowerCase()));
-    const uniqueNewTerms = potentialNewTerms
-      .filter(nt => !usedPhrases.has(nt.phrase.toLowerCase()))
-      .slice(0, 3); // Limit to top 3 to avoid overwhelming user
+    const candidateNewTerms = potentialNewTerms
+      .filter(nt => !usedPhrases.has(nt.phrase.toLowerCase()));
 
-    return { normalized, suggestions, newTerms: uniqueNewTerms };
+    // Use Agent 2 to filter sentence fragments from real technical terms
+    let newTerms = [];
+    if (candidateNewTerms.length > 0) {
+      const evaluations = await filterTechnicalTerms(candidateNewTerms);
+      newTerms = candidateNewTerms
+        .filter((term, idx) => {
+          const evaluation = evaluations[idx];
+          return evaluation && evaluation.is_technical_term;
+        })
+        .slice(0, 3); // Limit to top 3 to avoid overwhelming user
+    }
+
+    return { normalized, suggestions, newTerms };
 
   } catch (error) {
     console.error('❌ Terminology normalization failed:', error.message);
