@@ -125,15 +125,39 @@ async function normalizeHVACTerms(text) {
         const similarity = bestMatch ? bestMatch.similarity : 0;
 
         // Check if this looks like a technical term that should be in glossary
+        // Must be a clean technical phrase, not a sentence fragment
+
+        // First, exclude phrases with sentence fragments
+        const excludeWords = [
+          // Common verbs that indicate sentence fragments
+          'replaced', 'needs', 'needing', 'along', 'that', 'this', 'these', 'those',
+          'was', 'were', 'been', 'being', 'have', 'has', 'had',
+          // Prepositions and conjunctions
+          'with', 'without', 'along', 'at', 'from', 'into', 'onto', 'upon'
+        ];
+
+        const phraseWords = candidate.phrase.toLowerCase().split(/\s+/);
+        const hasExcludedWord = excludeWords.some(word => phraseWords.includes(word));
+
+        // Exclude phrases with punctuation (sentence fragments)
+        const hasPunctuation = /[.,:;!?]/.test(candidate.phrase);
+
+        // Only consider it technical if it has technical indicators AND is clean
+        const hasTechnicalIndicators =
+          /\d/.test(candidate.phrase) || // Contains numbers (24V, R-410A, etc.)
+          /[A-Z]{2,}/.test(candidate.phrase) || // Has acronyms (RTU, AHU, etc.)
+          (candidate.phrase.includes('-') && /\d/.test(candidate.phrase)) || // Has hyphen with number
+          /\d+V\b/.test(candidate.phrase); // Voltage pattern (24V, 120V, etc.)
+
         const looksTechnical =
-          /\d/.test(candidate.phrase) || // Contains numbers
-          /[A-Z]{2,}/.test(candidate.phrase) || // Has acronyms
-          candidate.phrase.includes('-') || // Has hyphens
-          candidate.phrase.includes('V') || // Voltage indicator
-          candidate.phrase.split(' ').length >= 2; // Multi-word phrase
+          hasTechnicalIndicators &&
+          !hasExcludedWord &&
+          !hasPunctuation &&
+          candidate.phrase.split(' ').length >= 2 && // Multi-word
+          candidate.phrase.split(' ').length <= 5; // But not too long (likely sentence)
 
         // If similarity is low (<50%) and it looks technical, suggest adding to glossary
-        if (looksTechnical && similarity < 0.50 && candidate.phrase.split(' ').length >= 2) {
+        if (looksTechnical && similarity < 0.50) {
           potentialNewTerms.push({
             phrase: candidate.phrase,
             bestMatch: bestMatch ? bestMatch.standard_term : null,
@@ -382,7 +406,7 @@ async function autoMatchParts(repairs) {
           LIMIT 1
         `;
 
-        if (results.length > 0 && results[0].similarity > 0.3) {
+        if (results.length > 0 && results[0].similarity > 0.6) {
           const matchedPart = results[0];
 
           repair.selectedParts.push({
@@ -440,6 +464,18 @@ function extractQuantityAndTerm(partString) {
     .replace(/\bunits?\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
+
+  // Enhance search term for better matching
+  // If it looks like a refrigerant code, add "refrigerant" to improve semantic matching
+  if (/R-?\d{2,3}[A-Z]?/i.test(searchTerm)) {
+    searchTerm = searchTerm + ' refrigerant';
+    console.log(`  🔍 Enhanced refrigerant search: "${searchTerm}"`);
+  }
+
+  // If it looks like a voltage spec (24V, 120V, etc.), add context
+  if (/\d+V\b/i.test(searchTerm) && !/contactor|transformer|relay/i.test(searchTerm)) {
+    // Already has voltage, no need to enhance
+  }
 
   return { quantity, searchTerm };
 }
