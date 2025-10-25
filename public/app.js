@@ -3,17 +3,20 @@ let audioChunks = [];
 let isRecording = false;
 let currentRepairs = []; // In-memory storage for repairs
 let currentRepairIndex = null; // Track which repair is getting parts
+let recordingStartTime = null;
+let recordingTimerInterval = null;
 
 const jobNotesTextarea = document.getElementById('jobNotes');
-const recordBtn = document.getElementById('recordBtn');
 const submitBtn = document.getElementById('submitBtn');
 const statusMessage = document.getElementById('statusMessage');
 const resultsSection = document.getElementById('resultsSection');
 const transcriptionSection = document.getElementById('transcriptionSection');
 const transcriptionText = document.getElementById('transcriptionText');
 const repairGrid = document.getElementById('repairGrid');
-const recordIcon = document.getElementById('recordIcon');
-const recordText = document.getElementById('recordText');
+
+// Floating mic button elements
+const floatingMic = document.getElementById('floatingMic');
+const recordingIndicator = document.getElementById('recordingIndicator');
 
 // Parts search modal elements
 const partsModal = document.getElementById('partsModal');
@@ -28,7 +31,23 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-recordBtn.addEventListener('click', toggleRecording);
+// Push-to-talk functionality
+floatingMic.addEventListener('mousedown', startRecording);
+floatingMic.addEventListener('mouseup', stopRecording);
+floatingMic.addEventListener('mouseleave', (e) => {
+  if (isRecording) stopRecording();
+});
+
+// Touch support for mobile
+floatingMic.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  startRecording();
+});
+floatingMic.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  stopRecording();
+});
+
 submitBtn.addEventListener('click', handleSubmit);
 closeModal.addEventListener('click', () => hidePartsModal());
 partsModal.addEventListener('click', (e) => {
@@ -57,15 +76,9 @@ function hideStatus() {
   statusMessage.classList.add('hidden');
 }
 
-async function toggleRecording() {
-  if (isRecording) {
-    stopRecording();
-  } else {
-    await startRecording();
-  }
-}
-
 async function startRecording() {
+  if (isRecording) return; // Already recording
+
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showStatus('Voice recording is not supported in this browser. Please type your notes instead.', 'error');
@@ -88,7 +101,7 @@ async function startRecording() {
 
     mediaRecorder.onstop = async () => {
       const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-      await convertAndProcess(audioBlob);
+      await convertAndProcess(audioBlob, true); // true = auto-submit
 
       stream.getTracks().forEach(track => track.stop());
     };
@@ -96,10 +109,15 @@ async function startRecording() {
     mediaRecorder.start();
     isRecording = true;
 
-    recordBtn.classList.add('recording');
-    recordIcon.textContent = '⏹️';
-    recordText.textContent = 'Stop Recording';
-    showStatus('Recording... Click "Stop Recording" when finished.', 'info');
+    // Visual feedback
+    floatingMic.classList.add('recording');
+    recordingIndicator.classList.remove('hidden');
+
+    // Start timer
+    recordingStartTime = Date.now();
+    recordingTimerInterval = setInterval(updateRecordingTimer, 100);
+
+    showStatus('Recording... Release to send', 'info');
 
   } catch (error) {
     console.error('Error starting recording:', error);
@@ -108,18 +126,38 @@ async function startRecording() {
 }
 
 function stopRecording() {
-  if (mediaRecorder && isRecording) {
-    mediaRecorder.stop();
-    isRecording = false;
+  if (!mediaRecorder || !isRecording) return;
 
-    recordBtn.classList.remove('recording');
-    recordIcon.textContent = '🎤';
-    recordText.textContent = 'Record Voice';
-    showStatus('Processing audio...', 'info');
+  mediaRecorder.stop();
+  isRecording = false;
+
+  // Visual feedback
+  floatingMic.classList.remove('recording');
+  recordingIndicator.classList.add('hidden');
+
+  // Stop timer
+  if (recordingTimerInterval) {
+    clearInterval(recordingTimerInterval);
+    recordingTimerInterval = null;
+  }
+
+  showStatus('Processing audio...', 'info');
+}
+
+function updateRecordingTimer() {
+  if (!isRecording || !recordingStartTime) return;
+
+  const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+  const minutes = Math.floor(elapsed / 60);
+  const seconds = elapsed % 60;
+
+  const timerElement = recordingIndicator.querySelector('.recording-timer');
+  if (timerElement) {
+    timerElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }
 }
 
-async function convertAndProcess(audioBlob) {
+async function convertAndProcess(audioBlob, autoSubmit = false) {
   try {
     const arrayBuffer = await audioBlob.arrayBuffer();
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -128,7 +166,13 @@ async function convertAndProcess(audioBlob) {
     const wavBlob = await audioBufferToWav(audioBuffer);
     const base64Audio = await blobToBase64(wavBlob);
 
-    await submitToBackend(base64Audio, null);
+    if (autoSubmit) {
+      // Auto-submit: transcribe and parse immediately
+      await submitToBackend(base64Audio, null);
+    } else {
+      // Manual mode: just transcribe (not used anymore but keeping for compatibility)
+      await submitToBackend(base64Audio, null);
+    }
 
   } catch (error) {
     console.error('Error converting audio:', error);

@@ -513,6 +513,70 @@
         color: #6b7280;
       }
 
+      /* Floating Push-to-Talk Mic Button */
+      .floating-mic {
+        position: fixed;
+        bottom: 30px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: 4px solid white;
+        box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 999;
+        transition: all 0.2s;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: none;
+      }
+
+      .floating-mic:hover {
+        transform: translateX(-50%) scale(1.05);
+        box-shadow: 0 12px 32px rgba(102, 126, 234, 0.5);
+      }
+
+      .floating-mic:active {
+        transform: translateX(-50%) scale(0.95);
+      }
+
+      .floating-mic.recording {
+        background: #ef4444;
+        animation: pulse-recording 1.5s ease-in-out infinite;
+      }
+
+      @keyframes pulse-recording {
+        0%, 100% {
+          box-shadow: 0 8px 24px rgba(239, 68, 68, 0.6), 0 0 0 0 rgba(239, 68, 68, 0.7);
+        }
+        50% {
+          box-shadow: 0 8px 24px rgba(239, 68, 68, 0.6), 0 0 0 20px rgba(239, 68, 68, 0);
+        }
+      }
+
+      .recording-indicator {
+        position: absolute;
+        top: -40px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .recording-timer {
+        font-variant-numeric: tabular-nums;
+      }
+
       @media (max-width: 640px) {
         body {
           padding: 12px;
@@ -556,15 +620,22 @@
         <div id="statusMessage" class="hidden"></div>
 
         <div class="button-group">
-          <button id="recordBtn" class="btn-secondary">
-            <span id="recordIcon">🎤</span>
-            <span id="recordText">Record Voice</span>
-          </button>
           <button id="submitBtn" class="btn-primary">
             <span id="submitText">Parse Notes</span>
           </button>
         </div>
       </div>
+
+      <!-- Floating Push-to-Talk Mic Button -->
+      <button id="floatingMic" class="floating-mic">
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white">
+          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+          <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+        </svg>
+        <div id="recordingIndicator" class="recording-indicator hidden">
+          <div class="recording-timer">0:00</div>
+        </div>
+      </button>
 
       <div id="resultsSection" class="results-section">
         <div class="card">
