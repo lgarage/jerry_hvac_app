@@ -194,25 +194,9 @@ app.get('/api/parts/search', async (req, res) => {
     });
 
     const queryEmbedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(queryEmbedding);
 
-    // Build WHERE clause conditions
-    let whereConditions = [];
-    const params = { queryEmbedding: JSON.stringify(queryEmbedding) };
-
-    if (type) {
-      whereConditions.push(sql`type = ${type}`);
-    }
-
-    if (category) {
-      whereConditions.push(sql`category = ${category}`);
-    }
-
-    // Combine WHERE conditions
-    const whereClause = whereConditions.length > 0
-      ? sql`WHERE ${sql.unsafe(whereConditions.map((_, i) => `condition_${i}`).join(' AND '))}`
-      : sql``;
-
-    // Execute search query with lower threshold (0.3 = 30% similarity)
+    // Execute search query - no threshold, just order by similarity
     const results = await sql`
       SELECT
         id,
@@ -224,9 +208,9 @@ app.get('/api/parts/search', async (req, res) => {
         price,
         thumbnail_url,
         common_uses,
-        1 - (embedding <=> ${params.queryEmbedding}::vector(1536)) AS similarity
+        1 - (embedding <=> ${embeddingStr}::vector(1536)) AS similarity
       FROM parts
-      ORDER BY embedding <=> ${params.queryEmbedding}::vector(1536)
+      ORDER BY embedding <=> ${embeddingStr}::vector(1536)
       LIMIT ${parseInt(limit)}
     `;
 
