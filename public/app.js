@@ -6,6 +6,33 @@ let currentRepairIndex = null; // Track which repair is getting parts
 let recordingStartTime = null;
 let recordingTimerInterval = null;
 
+// LocalStorage persistence functions
+function saveRepairsToLocalStorage() {
+  try {
+    localStorage.setItem('jerryHVAC_repairs', JSON.stringify(currentRepairs));
+    console.log('💾 Saved repairs to localStorage:', currentRepairs.length);
+  } catch (error) {
+    console.error('Failed to save repairs:', error);
+  }
+}
+
+function loadRepairsFromLocalStorage() {
+  try {
+    const saved = localStorage.getItem('jerryHVAC_repairs');
+    if (saved) {
+      currentRepairs = JSON.parse(saved);
+      console.log('📂 Loaded repairs from localStorage:', currentRepairs.length);
+      if (currentRepairs.length > 0) {
+        renderRepairs();
+        resultsSection.classList.add('visible');
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load repairs:', error);
+    currentRepairs = [];
+  }
+}
+
 const jobNotesTextarea = document.getElementById('jobNotes');
 const submitBtn = document.getElementById('submitBtn');
 const statusMessage = document.getElementById('statusMessage');
@@ -32,11 +59,14 @@ const partsResults = document.getElementById('partsResults');
 // Keyboard mode state
 let isKeyboardMode = false;
 
-// Ensure modal is hidden on page load
+// Load repairs from localStorage and ensure modal is hidden on page load
 window.addEventListener('DOMContentLoaded', () => {
   if (partsModal) {
     partsModal.classList.add('hidden');
   }
+
+  // Load saved repairs
+  loadRepairsFromLocalStorage();
 });
 
 // Push-to-talk functionality
@@ -478,6 +508,7 @@ function displayResults(result) {
 
     // APPEND new repairs to existing ones instead of replacing
     currentRepairs.push(...repairsWithContext);
+    saveRepairsToLocalStorage(); // Persist to localStorage
     renderRepairs();
 
     resultsSection.classList.add('visible');
@@ -1218,6 +1249,7 @@ function createRepairCard(repair, index) {
       minusBtn.addEventListener('click', () => {
         if (part.quantity > 1) {
           part.quantity -= 1;
+          saveRepairsToLocalStorage(); // Persist quantity change
           renderRepairs();
         } else {
           if (confirm(`Remove ${part.name} from this repair?`)) {
@@ -1241,6 +1273,7 @@ function createRepairCard(repair, index) {
         const newQty = parseInt(e.target.value);
         if (!isNaN(newQty) && newQty > 0) {
           part.quantity = newQty;
+          saveRepairsToLocalStorage(); // Persist quantity change
           renderRepairs();
         } else if (newQty === 0) {
           if (confirm(`Remove ${part.name} from this repair?`)) {
@@ -1268,6 +1301,7 @@ function createRepairCard(repair, index) {
       plusBtn.style.padding = '0';
       plusBtn.addEventListener('click', () => {
         part.quantity += 1;
+        saveRepairsToLocalStorage(); // Persist quantity change
         renderRepairs();
       });
 
@@ -1338,6 +1372,7 @@ function editRepair(index) {
     notes: notes.trim()
   };
 
+  saveRepairsToLocalStorage(); // Persist repair update
   renderRepairs();
   showStatus('Repair updated successfully!', 'success');
 }
@@ -1345,6 +1380,7 @@ function editRepair(index) {
 function deleteRepair(index) {
   if (confirm('Are you sure you want to delete this repair?')) {
     currentRepairs.splice(index, 1);
+    saveRepairsToLocalStorage(); // Persist to localStorage
     renderRepairs();
     showStatus('Repair deleted.', 'info');
 
@@ -1374,6 +1410,7 @@ function addNewRepair() {
   };
 
   currentRepairs.push(newRepair);
+  saveRepairsToLocalStorage(); // Persist to localStorage
   renderRepairs();
   showStatus('New repair added!', 'success');
 }
@@ -1526,6 +1563,7 @@ function addPartToRepair(part) {
     quantity: 1
   });
 
+  saveRepairsToLocalStorage(); // Persist part addition
   renderRepairs();
   hidePartsModal();
   showStatus(`Added ${part.name} to repair!`, 'success');
@@ -1536,6 +1574,7 @@ function removePartFromRepair(repairIndex, partNumber) {
   if (!repair.selectedParts) return;
 
   repair.selectedParts = repair.selectedParts.filter(p => p.part_number !== partNumber);
+  saveRepairsToLocalStorage(); // Persist part removal
   renderRepairs();
   showStatus('Part removed from repair.', 'info');
 }
