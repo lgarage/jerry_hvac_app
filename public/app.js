@@ -14,15 +14,23 @@ const transcriptionSection = document.getElementById('transcriptionSection');
 const transcriptionText = document.getElementById('transcriptionText');
 const repairGrid = document.getElementById('repairGrid');
 
-// Floating mic button elements
+// Floating input elements
+const floatingInputContainer = document.getElementById('floatingInputContainer');
 const floatingMic = document.getElementById('floatingMic');
 const recordingIndicator = document.getElementById('recordingIndicator');
+const keyboardToggle = document.getElementById('keyboardToggle');
+const floatingTextInput = document.getElementById('floatingTextInput');
+const floatingTextarea = document.getElementById('floatingTextarea');
+const floatingSubmit = document.getElementById('floatingSubmit');
 
 // Parts search modal elements
 const partsModal = document.getElementById('partsModal');
 const closeModal = document.getElementById('closeModal');
 const partsSearchInput = document.getElementById('partsSearchInput');
 const partsResults = document.getElementById('partsResults');
+
+// Keyboard mode state
+let isKeyboardMode = false;
 
 // Ensure modal is hidden on page load
 window.addEventListener('DOMContentLoaded', () => {
@@ -54,6 +62,20 @@ partsModal.addEventListener('click', (e) => {
   if (e.target === partsModal) hidePartsModal();
 });
 
+// Keyboard toggle functionality
+keyboardToggle.addEventListener('click', toggleKeyboardMode);
+
+// Floating submit button
+floatingSubmit.addEventListener('click', handleFloatingSubmit);
+
+// Allow Enter+Shift for new line, Enter alone to submit
+floatingTextarea.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    handleFloatingSubmit();
+  }
+});
+
 // Debounced search
 let searchTimeout;
 partsSearchInput.addEventListener('input', (e) => {
@@ -74,6 +96,51 @@ function showStatus(message, type = 'info') {
 
 function hideStatus() {
   statusMessage.classList.add('hidden');
+}
+
+function toggleKeyboardMode() {
+  isKeyboardMode = !isKeyboardMode;
+
+  if (isKeyboardMode) {
+    // Activate keyboard mode
+    floatingInputContainer.classList.add('keyboard-mode');
+    keyboardToggle.classList.add('active');
+    floatingTextInput.classList.remove('hidden');
+
+    // Use setTimeout to ensure transition happens after display change
+    setTimeout(() => {
+      floatingTextInput.classList.add('visible');
+      floatingTextarea.focus();
+    }, 10);
+
+    showStatus('Keyboard mode active - Type your notes', 'info');
+  } else {
+    // Deactivate keyboard mode
+    floatingInputContainer.classList.remove('keyboard-mode');
+    keyboardToggle.classList.remove('active');
+    floatingTextInput.classList.remove('visible');
+
+    setTimeout(() => {
+      floatingTextInput.classList.add('hidden');
+    }, 300); // Wait for transition to complete
+
+    showStatus('Voice mode active - Hold mic to record', 'info');
+  }
+}
+
+async function handleFloatingSubmit() {
+  const text = floatingTextarea.value.trim();
+
+  if (!text) {
+    showStatus('Please enter some text before submitting.', 'error');
+    return;
+  }
+
+  // Submit the text (same logic as main submit)
+  await submitToBackend(null, text);
+
+  // Clear the floating textarea after successful submit
+  floatingTextarea.value = '';
 }
 
 async function startRecording() {
