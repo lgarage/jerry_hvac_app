@@ -20,17 +20,20 @@ const openai = new OpenAI({
 app.post('/api/parse', async (req, res) => {
   try {
     const { audio, text } = req.body;
+    let rawTranscription = text || '';
     let transcription = text || '';
     let suggestions = [];
     let newTerms = [];
 
     if (audio && !text) {
       const result = await transcribeAudio(audio);
-      transcription = result.text;
+      rawTranscription = result.rawText; // Save original transcription
+      transcription = result.text; // Normalized version
       suggestions = result.suggestions || [];
       newTerms = result.newTerms || [];
     } else if (text) {
       // Also normalize typed text
+      rawTranscription = text; // Keep original typed text
       const { normalized, suggestions: textSuggestions, newTerms: textNewTerms } = await normalizeHVACTerms(text);
       transcription = normalized;
       suggestions = textSuggestions || [];
@@ -41,13 +44,15 @@ app.post('/api/parse', async (req, res) => {
       return res.status(400).json({ error: 'No input provided' });
     }
 
-    const parsedRepairs = await parseRepairs(transcription);
+    // Pass both raw and normalized text to GPT-4 for better context
+    const parsedRepairs = await parseRepairs(transcription, rawTranscription);
 
     // Auto-match parts from catalog for each repair
     const repairsWithParts = await autoMatchParts(parsedRepairs);
 
     res.json({
-      transcription,
+      raw_transcription: rawTranscription, // Original text before normalization
+      transcription, // Normalized text with standard terminology
       repairs: repairsWithParts,
       suggestions, // Send terminology suggestions to frontend for confirmation
       newTerms // Send potential new terms to add to glossary
@@ -286,7 +291,12 @@ async function transcribeAudio(base64Audio) {
       console.log('Normalized transcription:', normalized);
     }
 
-    return { text: normalized, suggestions, newTerms };
+    return {
+      rawText, // Original Whisper transcription
+      text: normalized, // Normalized with standard terminology
+      suggestions,
+      newTerms
+    };
 
   } catch (error) {
     console.error('Transcription error:', error);
@@ -294,7 +304,7 @@ async function transcribeAudio(base64Audio) {
   }
 }
 
-async function parseRepairs(transcription) {
+async function parseRepairs(transcription, rawTranscription = null) {
   try {
     const systemPrompt = `You are an HVAC repair documentation assistant. Parse the technician's notes into structured repair items.
 
@@ -340,11 +350,17 @@ Example output:
 
 Return ONLY valid JSON array, no additional text.`;
 
+    // Build user message with both raw and normalized text for better context
+    let userMessage = transcription;
+    if (rawTranscription && rawTranscription !== transcription) {
+      userMessage = `Original voice transcription: "${rawTranscription}"\n\nNormalized with standard terminology: "${transcription}"\n\nPlease parse the normalized version, but reference the original if needed for context.`;
+    }
+
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: transcription }
+        { role: 'user', content: userMessage }
       ],
       temperature: 0.3
     });

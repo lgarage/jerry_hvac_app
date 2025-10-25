@@ -391,16 +391,93 @@ async function submitToBackend(audio, text) {
 }
 
 function displayResults(result) {
+  // Store both raw and normalized transcription for context
   if (result.transcription && result.transcription !== jobNotesTextarea.value.trim()) {
+    const hasRawText = result.raw_transcription && result.raw_transcription !== result.transcription;
+
+    // Clear any existing raw text toggle
+    const existingToggle = transcriptionSection.querySelector('.raw-text-toggle');
+    if (existingToggle) existingToggle.remove();
+
+    const existingRawText = transcriptionSection.querySelector('.raw-text-display');
+    if (existingRawText) existingRawText.remove();
+
+    // Show normalized text
     transcriptionText.textContent = result.transcription;
     transcriptionSection.classList.remove('hidden');
+
+    // Add toggle button for raw text if they differ
+    if (hasRawText) {
+      const toggleButton = document.createElement('button');
+      toggleButton.className = 'raw-text-toggle';
+      toggleButton.textContent = '👁️ View Raw Text';
+      toggleButton.style.cssText = `
+        background: #6366f1;
+        color: white;
+        border: none;
+        padding: 6px 14px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-top: 8px;
+        transition: all 0.2s;
+      `;
+      toggleButton.addEventListener('mouseover', () => {
+        toggleButton.style.background = '#4f46e5';
+      });
+      toggleButton.addEventListener('mouseout', () => {
+        toggleButton.style.background = '#6366f1';
+      });
+
+      // Create raw text display (hidden by default)
+      const rawTextDisplay = document.createElement('div');
+      rawTextDisplay.className = 'raw-text-display';
+      rawTextDisplay.style.cssText = `
+        display: none;
+        background: #f3f4f6;
+        border: 2px solid #9ca3af;
+        border-radius: 8px;
+        padding: 12px;
+        margin-top: 8px;
+        font-family: monospace;
+        font-size: 0.9rem;
+        color: #374151;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      `;
+      rawTextDisplay.innerHTML = `<strong style="color: #6366f1;">Raw Whisper Transcription:</strong><br>${result.raw_transcription}`;
+
+      // Toggle functionality
+      let isRawVisible = false;
+      toggleButton.addEventListener('click', () => {
+        isRawVisible = !isRawVisible;
+        if (isRawVisible) {
+          rawTextDisplay.style.display = 'block';
+          toggleButton.textContent = '👁️ Hide Raw Text';
+        } else {
+          rawTextDisplay.style.display = 'none';
+          toggleButton.textContent = '👁️ View Raw Text';
+        }
+      });
+
+      transcriptionSection.appendChild(toggleButton);
+      transcriptionSection.appendChild(rawTextDisplay);
+    }
   } else {
     transcriptionSection.classList.add('hidden');
   }
 
   if (result.repairs && result.repairs.length > 0) {
+    // Store raw transcription with each repair for context
+    const repairsWithContext = result.repairs.map(repair => ({
+      ...repair,
+      raw_transcription: result.raw_transcription,
+      normalized_transcription: result.transcription
+    }));
+
     // APPEND new repairs to existing ones instead of replacing
-    currentRepairs.push(...result.repairs);
+    currentRepairs.push(...repairsWithContext);
     renderRepairs();
 
     resultsSection.classList.add('visible');
