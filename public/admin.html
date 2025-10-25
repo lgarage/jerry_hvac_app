@@ -391,6 +391,12 @@
         <select id="categoryFilter">
           <option value="">All Categories</option>
         </select>
+        <select id="sortSelect">
+          <option value="term-asc">Sort: Term (A-Z)</option>
+          <option value="term-desc">Sort: Term (Z-A)</option>
+          <option value="category-asc">Sort: Category (A-Z)</option>
+          <option value="category-desc">Sort: Category (Z-A)</option>
+        </select>
         <button id="refreshBtn" class="btn btn-secondary">🔄 Refresh</button>
       </div>
 
@@ -407,6 +413,7 @@
     const cancelEditBtn = document.getElementById('cancelEdit');
     const termsList = document.getElementById('termsList');
     const categoryFilter = document.getElementById('categoryFilter');
+    const sortSelect = document.getElementById('sortSelect');
     const refreshBtn = document.getElementById('refreshBtn');
     const stats = document.getElementById('stats');
 
@@ -463,9 +470,27 @@
           return;
         }
 
+        // Sort terms based on selected option
+        const sortOption = sortSelect.value;
+        const sortedTerms = [...data.terms].sort((a, b) => {
+          let aVal, bVal;
+
+          if (sortOption.startsWith('term-')) {
+            aVal = a.standard_term.toLowerCase();
+            bVal = b.standard_term.toLowerCase();
+          } else if (sortOption.startsWith('category-')) {
+            aVal = a.category.toLowerCase();
+            bVal = b.category.toLowerCase();
+          }
+
+          if (aVal < bVal) return sortOption.endsWith('-asc') ? -1 : 1;
+          if (aVal > bVal) return sortOption.endsWith('-asc') ? 1 : -1;
+          return 0;
+        });
+
         termsList.innerHTML = '';
 
-        data.terms.forEach(term => {
+        sortedTerms.forEach(term => {
           const termItem = document.createElement('div');
           termItem.className = 'term-item';
 
@@ -622,6 +647,10 @@
     };
 
     categoryFilter.addEventListener('change', () => {
+      loadTerms(categoryFilter.value);
+    });
+
+    sortSelect.addEventListener('change', () => {
       loadTerms(categoryFilter.value);
     });
 

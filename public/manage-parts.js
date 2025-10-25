@@ -1,5 +1,7 @@
 let allParts = [];
 let currentEditingPart = null;
+let currentSortColumn = 'name'; // Default sort by name
+let currentSortDirection = 'asc'; // ascending
 
 // Load parts on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -69,21 +71,29 @@ function renderPartsTable(parts) {
     return;
   }
 
+  // Sort parts before rendering
+  const sortedParts = sortParts([...parts]);
+
+  const getSortIcon = (column) => {
+    if (currentSortColumn !== column) return ' ↕️';
+    return currentSortDirection === 'asc' ? ' ↑' : ' ↓';
+  };
+
   const table = `
     <div class="parts-table">
       <table>
         <thead>
           <tr>
-            <th>Part Number</th>
-            <th>Name</th>
-            <th>Category</th>
-            <th>Type</th>
-            <th style="text-align: right;">Price</th>
+            <th class="sortable" onclick="sortBy('part_number')">Part Number${getSortIcon('part_number')}</th>
+            <th class="sortable" onclick="sortBy('name')">Name${getSortIcon('name')}</th>
+            <th class="sortable" onclick="sortBy('category')">Category${getSortIcon('category')}</th>
+            <th class="sortable" onclick="sortBy('type')">Type${getSortIcon('type')}</th>
+            <th class="sortable" style="text-align: right;" onclick="sortBy('price')">Price${getSortIcon('price')}</th>
             <th style="text-align: center;">Actions</th>
           </tr>
         </thead>
         <tbody>
-          ${parts.map(part => `
+          ${sortedParts.map(part => `
             <tr>
               <td><strong>${part.part_number}</strong></td>
               <td>${part.name}</td>
@@ -97,7 +107,7 @@ function renderPartsTable(parts) {
               <td style="text-align: center;">
                 <div class="action-buttons">
                   <button class="btn-icon btn-edit" onclick="editPart(${part.id})">✏️ Edit</button>
-                  <button class="btn-icon btn-delete" onclick="deletePart(${part.id}, '${part.name}')">🗑️</button>
+                  <button class="btn-icon btn-delete" onclick="deletePart(${part.id}, '${part.name.replace(/'/g, "\\'")}')">🗑️</button>
                 </div>
               </td>
             </tr>
@@ -108,6 +118,60 @@ function renderPartsTable(parts) {
   `;
 
   container.innerHTML = table;
+}
+
+// Sort parts array
+function sortParts(parts) {
+  return parts.sort((a, b) => {
+    let aVal, bVal;
+
+    switch (currentSortColumn) {
+      case 'part_number':
+        aVal = a.part_number.toLowerCase();
+        bVal = b.part_number.toLowerCase();
+        break;
+      case 'name':
+        aVal = a.name.toLowerCase();
+        bVal = b.name.toLowerCase();
+        break;
+      case 'category':
+        aVal = a.category.toLowerCase();
+        bVal = b.category.toLowerCase();
+        break;
+      case 'type':
+        aVal = a.type.toLowerCase();
+        bVal = b.type.toLowerCase();
+        break;
+      case 'price':
+        aVal = parseFloat(a.price);
+        bVal = parseFloat(b.price);
+        break;
+      default:
+        aVal = a.name.toLowerCase();
+        bVal = b.name.toLowerCase();
+    }
+
+    let comparison = 0;
+    if (aVal > bVal) comparison = 1;
+    if (aVal < bVal) comparison = -1;
+
+    return currentSortDirection === 'asc' ? comparison : -comparison;
+  });
+}
+
+// Handle column sort click
+function sortBy(column) {
+  if (currentSortColumn === column) {
+    // Toggle direction if clicking same column
+    currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    // New column, default to ascending
+    currentSortColumn = column;
+    currentSortDirection = 'asc';
+  }
+
+  // Re-render with current filters applied
+  filterParts();
 }
 
 // Filter parts based on search and filters
