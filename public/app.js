@@ -467,9 +467,10 @@ function createRepairCard(repair, index) {
     selectedPartsSection.style.borderRadius = '8px';
     selectedPartsSection.style.border = '2px solid #10b981';
 
+    const hasAutoMatched = repair.selectedParts.some(p => p.auto_matched);
     const selectedPartsTitle = document.createElement('div');
     selectedPartsTitle.className = 'section-title';
-    selectedPartsTitle.textContent = '✓ Selected Parts from Catalog';
+    selectedPartsTitle.textContent = hasAutoMatched ? '🤖 AI Auto-Matched Parts' : '✓ Selected Parts from Catalog';
     selectedPartsTitle.style.color = '#10b981';
     selectedPartsSection.appendChild(selectedPartsTitle);
 
@@ -492,7 +493,14 @@ function createRepairCard(repair, index) {
       typeBadge.style.fontSize = '0.7rem';
       typeBadge.style.marginLeft = '8px';
 
-      partInfo.innerHTML = `<strong>${part.name}</strong> ${typeBadge.outerHTML}<br>`;
+      // Add auto-matched badge if applicable
+      let autoMatchBadge = '';
+      if (part.auto_matched) {
+        const confidence = Math.round(part.match_confidence * 100);
+        autoMatchBadge = `<span style="background: #3b82f6; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; margin-left: 8px;" title="Auto-matched from: ${part.original_text}">🤖 ${confidence}%</span>`;
+      }
+
+      partInfo.innerHTML = `<strong>${part.name}</strong> ${typeBadge.outerHTML}${autoMatchBadge}<br>`;
 
       // Price display
       const priceSpan = document.createElement('span');

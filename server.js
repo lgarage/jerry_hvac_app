@@ -32,9 +32,12 @@ app.post('/api/parse', async (req, res) => {
 
     const parsedRepairs = await parseRepairs(transcription);
 
+    // Auto-match parts from catalog for each repair
+    const repairsWithParts = await autoMatchParts(parsedRepairs);
+
     res.json({
       transcription,
-      repairs: parsedRepairs
+      repairs: repairsWithParts
     });
 
   } catch (error) {
@@ -129,6 +132,109 @@ Return ONLY valid JSON array, no additional text.`;
     console.error('Parsing error:', error);
     throw new Error(`Failed to parse repairs: ${error.message}`);
   }
+}
+
+// Auto-match parts from catalog using semantic search
+async function autoMatchParts(repairs) {
+  if (!repairs || repairs.length === 0) return repairs;
+
+  console.log('\n🔍 Auto-matching parts from catalog...');
+
+  for (const repair of repairs) {
+    if (!repair.parts || repair.parts.length === 0) continue;
+
+    repair.selectedParts = [];
+
+    for (const partString of repair.parts) {
+      try {
+        // Extract quantity from part string (e.g., "4 lbs R410A" → qty: 4, search: "R410A refrigerant")
+        const { quantity, searchTerm } = extractQuantityAndTerm(partString);
+
+        // Search parts database using semantic search
+        const embeddingResponse = await openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: searchTerm,
+        });
+
+        const queryEmbedding = embeddingResponse.data[0].embedding;
+        const embeddingStr = JSON.stringify(queryEmbedding);
+
+        // Find best matching part
+        const results = await sql`
+          SELECT
+            id,
+            part_number,
+            name,
+            description,
+            category,
+            type,
+            price,
+            1 - (embedding <=> ${embeddingStr}::vector(1536)) AS similarity
+          FROM parts
+          ORDER BY embedding <=> ${embeddingStr}::vector(1536)
+          LIMIT 1
+        `;
+
+        if (results.length > 0 && results[0].similarity > 0.3) {
+          const matchedPart = results[0];
+
+          repair.selectedParts.push({
+            part_number: matchedPart.part_number,
+            name: matchedPart.name,
+            price: matchedPart.price,
+            type: matchedPart.type,
+            quantity: quantity,
+            auto_matched: true,
+            original_text: partString,
+            match_confidence: parseFloat(matchedPart.similarity)
+          });
+
+          console.log(`  ✓ "${partString}" → ${matchedPart.name} (qty: ${quantity}, ${(matchedPart.similarity * 100).toFixed(0)}% match)`);
+        } else {
+          console.log(`  ✗ "${partString}" → No match found (best: ${results[0] ? (results[0].similarity * 100).toFixed(0) : 0}%)`);
+        }
+
+      } catch (error) {
+        console.error(`  Error matching part "${partString}":`, error.message);
+      }
+    }
+  }
+
+  console.log('✓ Auto-matching complete\n');
+  return repairs;
+}
+
+// Extract quantity and clean search term from part string
+function extractQuantityAndTerm(partString) {
+  let quantity = 1;
+  let searchTerm = partString.toLowerCase();
+
+  // Match patterns like "4 lbs", "5 pounds", "2x", "3 units", etc.
+  const quantityPatterns = [
+    /(\d+)\s*(?:lbs?|pounds?)/i,  // "4 lbs", "5 pounds"
+    /(\d+)\s*(?:x|×)/i,            // "2x", "3×"
+    /(\d+)\s+/,                     // "4 " (number followed by space)
+  ];
+
+  for (const pattern of quantityPatterns) {
+    const match = partString.match(pattern);
+    if (match) {
+      quantity = parseInt(match[1]);
+      // Remove the quantity from search term
+      searchTerm = partString.replace(pattern, '').trim();
+      break;
+    }
+  }
+
+  // Clean up search term for better matching
+  searchTerm = searchTerm
+    .replace(/\blbs?\b/gi, '') // Remove "lb", "lbs"
+    .replace(/\bpounds?\b/gi, '')
+    .replace(/\bunits?\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return { quantity, searchTerm };
 }
 
 // In-memory storage for submitted repairs
