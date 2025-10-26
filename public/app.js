@@ -12,10 +12,519 @@ let modalMediaRecorder = null;
 let modalAudioChunks = [];
 let isModalRecording = false;
 let currentPartToAdd = '';
+let modalFieldHistory = {}; // Track previous field values for undo
 
 // Conversational command state
 let conversationState = null; // Tracks multi-step voice commands
 // Format: { type: 'add_part' | 'add_term', data: {}, nextField: 'name', rawCommand: '' }
+
+// ========== VOICE PARSER CONFIGURATION ==========
+const PARSER_CONFIG = {
+  // Hybrid validation settings
+  useServerValidation: true, // Toggle to disable GPT-4 validation (cost saving)
+  confidenceThreshold: 0.72, // Call GPT-4 only if client confidence < this
+
+  // Fuzzy matching settings
+  fuzzyMatchThreshold: 0.72, // Levenshtein similarity threshold
+
+  // Valid dropdown options
+  categories: ['Electrical', 'Mechanical', 'Refrigeration', 'Controls', 'Filters', 'Other'],
+  types: ['Consumable', 'Inventory'],
+
+  // Quantity multiplier keywords
+  multipliers: {
+    'pack': 1,
+    'packs': 1,
+    'pair': 2,
+    'pairs': 2,
+    'dozen': 12,
+    'dozens': 12
+  },
+
+  // Word-to-number mapping
+  numberWords: {
+    'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+    'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+    'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14, 'fifteen': 15,
+    'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20,
+    'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60, 'seventy': 70,
+    'eighty': 80, 'ninety': 90, 'hundred': 100, 'thousand': 1000,
+    'half': 0.5, 'quarter': 0.25, 'quarters': 0.25
+  }
+};
+
+// ========== VOICE PARSER HELPER FUNCTIONS ==========
+
+/**
+ * Calculate Levenshtein distance between two strings
+ * Used for fuzzy matching categories and types
+ */
+function levenshteinDistance(str1, str2) {
+  str1 = str1.toLowerCase();
+  str2 = str2.toLowerCase();
+
+  const matrix = [];
+
+  for (let i = 0; i <= str2.length; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= str1.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= str2.length; i++) {
+    for (let j = 1; j <= str1.length; j++) {
+      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[str2.length][str1.length];
+}
+
+/**
+ * Calculate similarity score (0-1) between two strings
+ */
+function similarity(str1, str2) {
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+
+  if (longer.length === 0) return 1.0;
+
+  const editDistance = levenshteinDistance(longer, shorter);
+  return (longer.length - editDistance) / longer.length;
+}
+
+/**
+ * Convert word-based numbers to numeric values
+ * Examples: "one twenty-five" → 1.25, "ninety-nine" → 99
+ */
+function wordsToNumber(text) {
+  text = text.toLowerCase().trim();
+  const words = text.split(/\s+/);
+  const numberWords = PARSER_CONFIG.numberWords;
+
+  let result = 0;
+  let current = 0;
+  let foundNumber = false;
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+
+    if (numberWords.hasOwnProperty(word)) {
+      foundNumber = true;
+      const value = numberWords[word];
+
+      if (value >= 100) {
+        current = (current || 1) * value;
+      } else {
+        current += value;
+      }
+    } else if (word === 'and') {
+      // Handle "three and a half" = 3.5
+      continue;
+    } else if (i > 0 && foundNumber) {
+      // Stop when we hit a non-number word after finding numbers
+      break;
+    }
+  }
+
+  result += current;
+  return foundNumber ? result : null;
+}
+
+/**
+ * Extract leading quantity with multipliers
+ * Examples:
+ *   "2 AA batteries" → { quantity: 2, remaining: "AA batteries" }
+ *   "two-pack filters" → { quantity: 2, remaining: "filters" }
+ *   "pack of 6 screws" → { quantity: 6, remaining: "screws" }
+ *   "3/4 ball valve" → null (embedded fraction, not a quantity)
+ */
+function extractLeadingQuantity(text) {
+  text = text.trim();
+
+  // Skip if starts with fraction pattern (e.g., "3/4 ball valve")
+  if (/^\d+\/\d+/.test(text)) {
+    return null;
+  }
+
+  // Pattern 1: Leading digit(s) with optional decimal
+  const digitMatch = text.match(/^(\d+(?:\.\d+)?)\s+(.+)/);
+  if (digitMatch) {
+    const qty = parseFloat(digitMatch[1]);
+    let remaining = digitMatch[2];
+
+    // Check for multipliers after the number (e.g., "2 pack of filters")
+    const multiplierMatch = remaining.match(/^(pack|packs|pair|pairs|dozen|dozens)\s+(?:of\s+)?(.+)/i);
+    if (multiplierMatch) {
+      const multiplierWord = multiplierMatch[1].toLowerCase();
+      const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
+      remaining = multiplierMatch[2];
+      return { quantity: qty * multiplier, remaining };
+    }
+
+    return { quantity: qty, remaining };
+  }
+
+  // Pattern 2: Word-based number at start
+  const wordMatch = wordsToNumber(text);
+  if (wordMatch !== null) {
+    // Find where the number words end
+    const words = text.split(/\s+/);
+    let endIndex = 0;
+    for (let i = 0; i < words.length; i++) {
+      if (PARSER_CONFIG.numberWords.hasOwnProperty(words[i].toLowerCase())) {
+        endIndex = i + 1;
+      } else {
+        break;
+      }
+    }
+
+    const remaining = words.slice(endIndex).join(' ');
+
+    // Check for multipliers
+    const multiplierMatch = remaining.match(/^(pack|packs|pair|pairs|dozen|dozens)\s+(?:of\s+)?(.+)/i);
+    if (multiplierMatch) {
+      const multiplierWord = multiplierMatch[1].toLowerCase();
+      const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
+      return { quantity: wordMatch * multiplier, remaining: multiplierMatch[2] };
+    }
+
+    return { quantity: wordMatch, remaining };
+  }
+
+  // Pattern 3: Multiplier word with number (e.g., "pack of 6", "two-pack")
+  const packMatch = text.match(/^(pack|packs|pair|pairs|dozen|dozens)(?:\s+of\s+|\s+|-)(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(.+)/i);
+  if (packMatch) {
+    const multiplierWord = packMatch[1].toLowerCase();
+    const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
+    const numberPart = packMatch[2];
+    const qty = PARSER_CONFIG.numberWords[numberPart.toLowerCase()] || parseFloat(numberPart);
+    return { quantity: qty * multiplier, remaining: packMatch[3] };
+  }
+
+  // Pattern 4: "two-pack" with no number after
+  const simplePackMatch = text.match(/^(\d+|one|two|three|four|five|six|seven|eight|nine|ten)-(pack|packs|pair|pairs)\s+(.+)/i);
+  if (simplePackMatch) {
+    const numberPart = simplePackMatch[1];
+    const multiplierWord = simplePackMatch[2].toLowerCase();
+    const qty = PARSER_CONFIG.numberWords[numberPart.toLowerCase()] || parseFloat(numberPart);
+    const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
+    return { quantity: qty * multiplier, remaining: simplePackMatch[3] };
+  }
+
+  return null;
+}
+
+/**
+ * Extract price from text
+ * Examples:
+ *   "price 129" → 129.00
+ *   "costs thirty dollars" → 30.00
+ *   "ninety-nine cents" → 0.99
+ *   "at 8.50 each" → 8.50
+ */
+function extractPrice(text) {
+  text = text.toLowerCase();
+
+  // Pattern 1: Explicit dollar amount with $ or "dollars"
+  const dollarMatch = text.match(/(?:price|cost|costs|at|for)?\s*\$?(\d+(?:\.\d{1,2})?)\s*(?:dollars?|each|per)?/i);
+  if (dollarMatch) {
+    return parseFloat(dollarMatch[1]);
+  }
+
+  // Pattern 2: Cents
+  const centsMatch = text.match(/(\d+|[a-z\s]+)\s*cents?/i);
+  if (centsMatch) {
+    const numberPart = centsMatch[1].trim();
+    const value = /^\d+$/.test(numberPart) ? parseFloat(numberPart) : wordsToNumber(numberPart);
+    if (value !== null) {
+      return value / 100;
+    }
+  }
+
+  // Pattern 3: Word-based price (e.g., "one twenty-five" = 1.25)
+  const priceKeywords = ['price', 'cost', 'costs', 'at', 'for'];
+  for (const keyword of priceKeywords) {
+    const regex = new RegExp(`${keyword}\\s+([a-z\\s]+?)(?:\\s+(?:dollars?|each|per)|$)`, 'i');
+    const match = text.match(regex);
+    if (match) {
+      const wordsPart = match[1].trim();
+      const value = wordsToNumber(wordsPart);
+      if (value !== null) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Fuzzy match category with Levenshtein distance
+ */
+function fuzzyMatchCategory(text) {
+  const categories = PARSER_CONFIG.categories;
+  const threshold = PARSER_CONFIG.fuzzyMatchThreshold;
+
+  text = text.toLowerCase();
+  let bestMatch = null;
+  let bestScore = 0;
+  let attempted = false;
+
+  for (const category of categories) {
+    const categoryLower = category.toLowerCase();
+
+    // Exact match
+    if (text.includes(categoryLower)) {
+      return { match: category, attempted: true, error: null };
+    }
+
+    // StartsWith match
+    if (categoryLower.startsWith(text) || text.startsWith(categoryLower.substring(0, 4))) {
+      return { match: category, attempted: true, error: null };
+    }
+
+    // Similarity score
+    const score = similarity(text, categoryLower);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = category;
+      attempted = true;
+    }
+  }
+
+  if (bestScore >= threshold) {
+    return { match: bestMatch, attempted: true, error: null };
+  }
+
+  if (attempted) {
+    const categoryList = categories.join(', ');
+    return {
+      match: null,
+      attempted: true,
+      error: `Unknown category. Try one of: ${categoryList}`
+    };
+  }
+
+  return { match: null, attempted: false, error: null };
+}
+
+/**
+ * Fuzzy match type with Levenshtein distance
+ */
+function fuzzyMatchType(text) {
+  const types = PARSER_CONFIG.types;
+  const threshold = PARSER_CONFIG.fuzzyMatchThreshold;
+
+  text = text.toLowerCase();
+  let bestMatch = null;
+  let bestScore = 0;
+  let attempted = false;
+
+  for (const type of types) {
+    const typeLower = type.toLowerCase();
+
+    // Exact match
+    if (text.includes(typeLower)) {
+      return { match: type, attempted: true, error: null };
+    }
+
+    // StartsWith match
+    if (typeLower.startsWith(text) || text.startsWith(typeLower.substring(0, 4))) {
+      return { match: type, attempted: true, error: null };
+    }
+
+    // Similarity score
+    const score = similarity(text, typeLower);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = type;
+      attempted = true;
+    }
+  }
+
+  if (bestScore >= threshold) {
+    return { match: bestMatch, attempted: true, error: null };
+  }
+
+  if (attempted) {
+    const typeList = types.join(', ');
+    return {
+      match: null,
+      attempted: true,
+      error: `Unknown type. Try one of: ${typeList}`
+    };
+  }
+
+  return { match: null, attempted: false, error: null };
+}
+
+/**
+ * Extract part number from text
+ * Look for patterns like M847D, R410A, etc.
+ */
+function extractPartNumber(text) {
+  // Pattern: uppercase letter(s) followed by numbers and possibly more letters/numbers
+  const patterns = [
+    /\b([A-Z]\d{3,}[A-Z]?)\b/,  // M847D, R410A
+    /\b([A-Z]{2,}\d+[A-Z]*)\b/, // MS9540, ABC123
+    /part\s*(?:number|#|num)?\s*:?\s*([A-Za-z0-9-]+)/i, // "part number M847D"
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[1].toUpperCase();
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Main parser: Extract structured data from spoken transcription
+ * @param {string} transcription - Raw voice transcription
+ * @param {object} currentFields - Current form field values (for incremental merge)
+ * @returns {object} Parsed data with quantity, name, category, type, price, etc.
+ */
+function parseSpokenPart(transcription, currentFields = {}) {
+  // Initialize result with current field values (MERGE mode)
+  const result = {
+    quantity: currentFields.quantity || null,
+    name: currentFields.name || null,
+    category: currentFields.category || null,
+    type: currentFields.type || null,
+    price: currentFields.price || null,
+    partNumber: currentFields.partNumber || null,
+    description: currentFields.description || null,
+    commonUses: currentFields.commonUses || null,
+    errors: [],
+    changedFields: [] // Track which fields were updated in this parse
+  };
+
+  let remainingText = transcription.trim();
+
+  // Special command: "reset fields"
+  if (/reset\s+fields?|clear\s+all|start\s+over/i.test(transcription)) {
+    return {
+      quantity: null,
+      name: null,
+      category: null,
+      type: null,
+      price: null,
+      partNumber: null,
+      description: null,
+      commonUses: null,
+      errors: [],
+      changedFields: ['ALL'],
+      resetCommand: true
+    };
+  }
+
+  // 1. Extract leading quantity
+  const qtyExtract = extractLeadingQuantity(remainingText);
+  if (qtyExtract) {
+    if (result.quantity !== qtyExtract.quantity) {
+      result.quantity = qtyExtract.quantity;
+      result.changedFields.push('quantity');
+    }
+    remainingText = qtyExtract.remaining;
+  }
+
+  // 2. Extract price
+  const priceExtract = extractPrice(transcription);
+  if (priceExtract !== null) {
+    if (result.price !== priceExtract) {
+      result.price = priceExtract;
+      result.changedFields.push('price');
+    }
+  }
+
+  // 3. Extract category
+  const categoryMatch = fuzzyMatchCategory(transcription);
+  if (categoryMatch.match) {
+    if (result.category !== categoryMatch.match) {
+      result.category = categoryMatch.match;
+      result.changedFields.push('category');
+    }
+  } else if (categoryMatch.error) {
+    result.errors.push(categoryMatch.error);
+  }
+
+  // 4. Extract type
+  const typeMatch = fuzzyMatchType(transcription);
+  if (typeMatch.match) {
+    if (result.type !== typeMatch.match) {
+      result.type = typeMatch.match;
+      result.changedFields.push('type');
+    }
+  } else if (typeMatch.error) {
+    result.errors.push(typeMatch.error);
+  }
+
+  // 5. Extract part number
+  const partNumExtract = extractPartNumber(transcription);
+  if (partNumExtract) {
+    if (result.partNumber !== partNumExtract) {
+      result.partNumber = partNumExtract;
+      result.changedFields.push('partNumber');
+    }
+  }
+
+  // 6. Update name if remaining text is meaningful
+  if (remainingText.length > 0 && (!result.name || remainingText.length > result.name.length)) {
+    if (result.name !== remainingText) {
+      result.name = remainingText;
+      result.changedFields.push('name');
+    }
+  }
+
+  // 7. Store full transcription in description if not already set
+  if (!result.description || transcription.length > result.description.length) {
+    if (result.description !== transcription) {
+      result.description = transcription;
+      result.changedFields.push('description');
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Calculate confidence score for parsed data
+ * Returns value between 0 and 1
+ */
+function calculateParseConfidence(parsedData) {
+  let score = 0;
+  let maxScore = 5;
+
+  // Required fields
+  if (parsedData.name) score += 1;
+  if (parsedData.category) score += 1;
+  if (parsedData.type) score += 1;
+
+  // Optional but valuable fields
+  if (parsedData.price !== null) score += 1;
+  if (parsedData.partNumber) score += 0.5;
+
+  // Penalties
+  if (parsedData.errors.length > 0) {
+    score -= parsedData.errors.length * 0.3;
+  }
+
+  const confidence = Math.max(0, Math.min(1, score / maxScore));
+  return confidence;
+}
 
 // LocalStorage persistence functions
 function saveRepairsToLocalStorage() {
