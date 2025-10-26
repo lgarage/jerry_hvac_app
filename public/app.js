@@ -230,20 +230,36 @@ async function handleFloatingSubmit() {
 function contextAwareStartRecording() {
   // Check if Add Part modal is open
   const addPartModal = document.getElementById('addPartModal');
-  if (addPartModal && !addPartModal.classList.contains('hidden')) {
+  const isModalOpen = addPartModal && !addPartModal.classList.contains('hidden');
+
+  console.log('Context-aware start recording:', {
+    modalOpen: isModalOpen,
+    currentPartToAdd: currentPartToAdd
+  });
+
+  if (isModalOpen) {
     // Modal is open - record for part details
+    console.log('Starting modal recording for part:', currentPartToAdd);
     startModalRecording();
   } else {
     // Normal repair notes recording
+    console.log('Starting normal repair recording');
     startRecording();
   }
 }
 
 function contextAwareStopRecording() {
+  console.log('Context-aware stop recording:', {
+    isModalRecording: isModalRecording,
+    isRecording: isRecording
+  });
+
   // Check which type of recording is active
   if (isModalRecording) {
+    console.log('Stopping modal recording');
     stopModalRecording();
   } else if (isRecording) {
+    console.log('Stopping normal recording');
     stopRecording();
   }
 }
