@@ -687,9 +687,10 @@ function displayResults(result) {
   }
 
   // Show new part suggestions (add to parts catalog)
-  if (result.newParts && result.newParts.length > 0) {
-    showNewPartSuggestions(result.newParts);
-  }
+  // DISABLED: User prefers to use blue indicators in repair cards instead
+  // if (result.newParts && result.newParts.length > 0) {
+  //   showNewPartSuggestions(result.newParts);
+  // }
 }
 
 // Show conversational prompt for missing fields
