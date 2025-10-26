@@ -292,7 +292,8 @@
       .list-items {
         display: flex;
         flex-wrap: wrap;
-        gap: 6px;
+        gap: 8px;
+        align-items: flex-start;
       }
 
       .list-item {
@@ -327,6 +328,191 @@
         to {
           transform: rotate(360deg);
         }
+      }
+
+      /* Part status indicators */
+      .part-item-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .part-not-in-database {
+        background: #dbeafe;
+        border: 2px solid #3b82f6;
+        position: relative;
+        cursor: pointer;
+      }
+
+      .part-not-in-database:hover {
+        background: #bfdbfe;
+      }
+
+      .not-in-db-badge {
+        background: #3b82f6;
+        color: white;
+        font-size: 0.7rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 600;
+        margin-left: 4px;
+      }
+
+      .add-part-btn {
+        background: #3b82f6;
+        color: white;
+        padding: 4px 8px;
+        font-size: 0.75rem;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.2s;
+      }
+
+      .add-part-btn:hover {
+        background: #2563eb;
+        transform: translateY(-1px);
+      }
+
+      /* Modal styles */
+      .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        padding: 20px;
+      }
+
+      .modal {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        max-width: 600px;
+        width: 100%;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #e5e7eb;
+      }
+
+      .modal-header h2 {
+        margin: 0;
+        color: #1f2937;
+        font-size: 1.5rem;
+      }
+
+      .modal-close {
+        background: #ef4444;
+        color: white;
+        border: none;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        font-size: 1.2rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+        padding: 0;
+        min-width: auto;
+        flex: none;
+      }
+
+      .modal-close:hover {
+        background: #dc2626;
+        transform: rotate(90deg);
+      }
+
+      .modal-voice-section {
+        background: #f3f4f6;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+      }
+
+      .modal-voice-section p {
+        margin: 0 0 12px 0;
+        color: #4b5563;
+        font-size: 0.9rem;
+      }
+
+      .form-group {
+        margin-bottom: 16px;
+      }
+
+      .form-group label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: #374151;
+        font-size: 0.9rem;
+      }
+
+      .form-group input,
+      .form-group select,
+      .form-group textarea {
+        width: 100%;
+        padding: 10px;
+        border: 2px solid #e5e7eb;
+        border-radius: 6px;
+        font-size: 0.95rem;
+        font-family: inherit;
+        transition: border-color 0.2s;
+      }
+
+      .form-group input:focus,
+      .form-group select:focus,
+      .form-group textarea:focus {
+        outline: none;
+        border-color: #667eea;
+      }
+
+      .form-group textarea {
+        min-height: 80px;
+        resize: vertical;
+      }
+
+      .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .modal-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+        padding-top: 16px;
+        border-top: 2px solid #e5e7eb;
+      }
+
+      .modal-actions button {
+        flex: 1;
+      }
+
+      .btn-cancel {
+        background: #6b7280;
+        color: white;
+      }
+
+      .btn-cancel:hover {
+        background: #4b5563;
       }
 
       @media (max-width: 640px) {
@@ -392,6 +578,80 @@
           <h2 style="margin-bottom: 16px; color: #1f2937">Parsed Repairs</h2>
           <div id="repairGrid" class="repair-grid"></div>
         </div>
+      </div>
+    </div>
+
+    <!-- Add Part Modal -->
+    <div id="addPartModal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>Add Part to Database</h2>
+          <button class="modal-close" onclick="closeAddPartModal()">×</button>
+        </div>
+
+        <div class="modal-voice-section">
+          <p><strong>Speak the part details:</strong> Describe the part, including its name, part number, category, price, and any other relevant information.</p>
+          <button id="modalRecordBtn" class="btn-secondary" style="width: 100%;">
+            <span id="modalRecordIcon">🎤</span>
+            <span id="modalRecordText">Hold to Record</span>
+          </button>
+        </div>
+
+        <form id="addPartForm">
+          <div class="form-group">
+            <label for="partName">Part Name *</label>
+            <input type="text" id="partName" required placeholder="e.g., Honeywell Economizer Actuator">
+          </div>
+
+          <div class="form-group">
+            <label for="partNumber">Part Number</label>
+            <input type="text" id="partNumber" placeholder="e.g., M847D">
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="partCategory">Category *</label>
+              <select id="partCategory" required>
+                <option value="">Select category...</option>
+                <option value="Electrical">Electrical</option>
+                <option value="Mechanical">Mechanical</option>
+                <option value="Refrigeration">Refrigeration</option>
+                <option value="Controls">Controls</option>
+                <option value="Filters">Filters</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="partType">Type *</label>
+              <select id="partType" required>
+                <option value="">Select type...</option>
+                <option value="consumable">Consumable</option>
+                <option value="inventory">Inventory</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="partPrice">Price ($)</label>
+            <input type="number" id="partPrice" step="0.01" min="0" placeholder="0.00">
+          </div>
+
+          <div class="form-group">
+            <label for="partDescription">Description</label>
+            <textarea id="partDescription" placeholder="Detailed description of the part..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="partCommonUses">Common Uses</label>
+            <textarea id="partCommonUses" placeholder="e.g., Damper control in RTUs, economizer systems..."></textarea>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="btn-cancel" onclick="closeAddPartModal()">Cancel</button>
+            <button type="submit" class="btn-secondary">Add Part to Database</button>
+          </div>
+        </form>
       </div>
     </div>
 

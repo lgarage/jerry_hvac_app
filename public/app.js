@@ -2,6 +2,13 @@ let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
 let currentRepairs = []; // In-memory storage for repairs
+let partsStatus = {}; // Cache for parts existence status
+
+// Modal variables
+let modalMediaRecorder = null;
+let modalAudioChunks = [];
+let isModalRecording = false;
+let currentPartToAdd = '';
 
 const jobNotesTextarea = document.getElementById('jobNotes');
 const recordBtn = document.getElementById('recordBtn');
@@ -14,8 +21,17 @@ const repairGrid = document.getElementById('repairGrid');
 const recordIcon = document.getElementById('recordIcon');
 const recordText = document.getElementById('recordText');
 
+// Modal elements
+const addPartModal = document.getElementById('addPartModal');
+const modalRecordBtn = document.getElementById('modalRecordBtn');
+const modalRecordIcon = document.getElementById('modalRecordIcon');
+const modalRecordText = document.getElementById('modalRecordText');
+const addPartForm = document.getElementById('addPartForm');
+
 recordBtn.addEventListener('click', toggleRecording);
 submitBtn.addEventListener('click', handleSubmit);
+modalRecordBtn.addEventListener('click', toggleModalRecording);
+addPartForm.addEventListener('submit', handleAddPart);
 
 function showStatus(message, type = 'info') {
   statusMessage.textContent = message;
@@ -258,8 +274,11 @@ function displayResults(result) {
   }
 }
 
-function renderRepairs() {
+async function renderRepairs() {
   repairGrid.innerHTML = '';
+
+  // Check all parts against database
+  await checkPartsInDatabase();
 
   currentRepairs.forEach((repair, index) => {
     const repairCard = createRepairCard(repair, index);
@@ -285,6 +304,38 @@ function renderRepairs() {
     submitFinalBtn.innerHTML = '<span>✓ Submit Final Repairs</span>';
     submitFinalBtn.addEventListener('click', submitFinalRepairs);
     repairGrid.appendChild(submitFinalBtn);
+  }
+}
+
+async function checkPartsInDatabase() {
+  // Collect all unique parts from all repairs
+  const allParts = new Set();
+  currentRepairs.forEach(repair => {
+    if (repair.parts && repair.parts.length > 0) {
+      repair.parts.forEach(part => allParts.add(part));
+    }
+  });
+
+  if (allParts.size === 0) return;
+
+  try {
+    const response = await fetch('/api/parts/check', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ parts: Array.from(allParts) })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      partsStatus = {};
+      data.results.forEach(result => {
+        partsStatus[result.part] = result.exists;
+      });
+    }
+  } catch (error) {
+    console.error('Error checking parts:', error);
   }
 }
 
@@ -338,10 +389,39 @@ function createRepairCard(repair, index) {
     const partsList = document.createElement('div');
     partsList.className = 'list-items';
     repair.parts.forEach(part => {
+      const partWrapper = document.createElement('div');
+      partWrapper.className = 'part-item-wrapper';
+
       const partItem = document.createElement('span');
       partItem.className = 'list-item';
+
+      // Check if part is in database
+      const isInDatabase = partsStatus[part];
+      if (isInDatabase === false) {
+        partItem.classList.add('part-not-in-database');
+      }
+
       partItem.textContent = part;
-      partsList.appendChild(partItem);
+      partWrapper.appendChild(partItem);
+
+      // Add "Not in DB" badge and button if part is not in database
+      if (isInDatabase === false) {
+        const badge = document.createElement('span');
+        badge.className = 'not-in-db-badge';
+        badge.textContent = 'Not in DB';
+        partWrapper.appendChild(badge);
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'add-part-btn';
+        addBtn.textContent = '+ Add';
+        addBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openAddPartModal(part);
+        });
+        partWrapper.appendChild(addBtn);
+      }
+
+      partsList.appendChild(partWrapper);
     });
 
     partsSection.appendChild(partsList);
@@ -479,6 +559,195 @@ async function submitFinalRepairs() {
 
   } catch (error) {
     console.error('Error submitting repairs:', error);
+    showStatus(`Error: ${error.message}`, 'error');
+  }
+}
+
+// ========== ADD PART MODAL FUNCTIONS ==========
+
+function openAddPartModal(partName) {
+  currentPartToAdd = partName;
+  document.getElementById('partName').value = partName;
+  addPartModal.classList.remove('hidden');
+
+  // Clear other fields
+  document.getElementById('partNumber').value = '';
+  document.getElementById('partCategory').value = '';
+  document.getElementById('partType').value = '';
+  document.getElementById('partPrice').value = '';
+  document.getElementById('partDescription').value = '';
+  document.getElementById('partCommonUses').value = '';
+}
+
+function closeAddPartModal() {
+  addPartModal.classList.add('hidden');
+  currentPartToAdd = '';
+
+  // Stop recording if active
+  if (isModalRecording) {
+    stopModalRecording();
+  }
+}
+
+async function toggleModalRecording() {
+  if (isModalRecording) {
+    stopModalRecording();
+  } else {
+    await startModalRecording();
+  }
+}
+
+async function startModalRecording() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showStatus('Voice recording is not supported in this browser.', 'error');
+      return;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    modalMediaRecorder = new MediaRecorder(stream, {
+      mimeType: 'audio/webm'
+    });
+
+    modalAudioChunks = [];
+
+    modalMediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        modalAudioChunks.push(event.data);
+      }
+    };
+
+    modalMediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(modalAudioChunks, { type: 'audio/webm' });
+      await processModalAudio(audioBlob);
+
+      stream.getTracks().forEach(track => track.stop());
+    };
+
+    modalMediaRecorder.start();
+    isModalRecording = true;
+
+    modalRecordBtn.classList.add('recording');
+    modalRecordIcon.textContent = '⏹️';
+    modalRecordText.textContent = 'Stop Recording';
+    showStatus('Recording part details... Click "Stop Recording" when finished.', 'info');
+
+  } catch (error) {
+    console.error('Error starting modal recording:', error);
+    showStatus('Could not access microphone. Please check permissions.', 'error');
+  }
+}
+
+function stopModalRecording() {
+  if (modalMediaRecorder && isModalRecording) {
+    modalMediaRecorder.stop();
+    isModalRecording = false;
+
+    modalRecordBtn.classList.remove('recording');
+    modalRecordIcon.textContent = '🎤';
+    modalRecordText.textContent = 'Hold to Record';
+    showStatus('Processing audio...', 'info');
+  }
+}
+
+async function processModalAudio(audioBlob) {
+  try {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    const wavBlob = await audioBufferToWav(audioBuffer);
+    const base64Audio = await blobToBase64(wavBlob);
+
+    // Send to backend to parse part details
+    showStatus('Extracting part details from audio...', 'info');
+
+    const response = await fetch('/api/parts/parse-details', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        audio: base64Audio,
+        partName: currentPartToAdd
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to parse part details');
+    }
+
+    const result = await response.json();
+
+    // Fill form with extracted details
+    if (result.partDetails) {
+      document.getElementById('partName').value = result.partDetails.name || currentPartToAdd;
+      document.getElementById('partNumber').value = result.partDetails.part_number || '';
+      document.getElementById('partCategory').value = result.partDetails.category || '';
+      document.getElementById('partType').value = result.partDetails.type || '';
+      document.getElementById('partPrice').value = result.partDetails.price || '';
+      document.getElementById('partDescription').value = result.partDetails.description || '';
+      document.getElementById('partCommonUses').value = result.partDetails.common_uses || '';
+
+      showStatus('Part details extracted! Review and edit as needed.', 'success');
+    }
+
+  } catch (error) {
+    console.error('Error processing modal audio:', error);
+    showStatus('Error processing audio. Please fill in the fields manually.', 'error');
+  }
+}
+
+async function handleAddPart(e) {
+  e.preventDefault();
+
+  const partData = {
+    name: document.getElementById('partName').value.trim(),
+    part_number: document.getElementById('partNumber').value.trim(),
+    category: document.getElementById('partCategory').value,
+    type: document.getElementById('partType').value,
+    price: parseFloat(document.getElementById('partPrice').value) || 0,
+    description: document.getElementById('partDescription').value.trim(),
+    common_uses: document.getElementById('partCommonUses').value.trim()
+  };
+
+  if (!partData.name || !partData.category || !partData.type) {
+    showStatus('Please fill in all required fields (Name, Category, Type).', 'error');
+    return;
+  }
+
+  try {
+    showStatus('Adding part to database...', 'info');
+
+    const response = await fetch('/api/parts/add', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(partData)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to add part');
+    }
+
+    const result = await response.json();
+
+    showStatus(`Successfully added "${partData.name}" to parts database!`, 'success');
+
+    // Update parts status cache
+    partsStatus[currentPartToAdd] = true;
+
+    // Close modal
+    closeAddPartModal();
+
+    // Re-render repairs to update UI
+    await renderRepairs();
+
+  } catch (error) {
+    console.error('Error adding part:', error);
     showStatus(`Error: ${error.message}`, 'error');
   }
 }
