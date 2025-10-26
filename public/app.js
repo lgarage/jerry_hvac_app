@@ -707,7 +707,11 @@ function showConversationalPrompt() {
       name: "What's the name of the part?",
       price: "What's the price? (e.g., '$45' or 'forty-five dollars')",
       category: "What category? (electrical, refrigerant, controls, filters, supplies, or other)",
-      type: "Is it consumable or inventory?"
+      type: "Is it consumable or inventory?",
+      brand: "What's the brand? (e.g., 'Honeywell', 'Carrier', 'Trane') - say 'skip' if not applicable",
+      vendor: "What vendor do you buy it from? (e.g., 'Johnstone', 'Ferguson') - say 'skip' if not applicable",
+      vendor_part_number: "What's the vendor part number? - say 'skip' if you don't know",
+      manufacturer_part_number: "What's the manufacturer part number? - say 'skip' if you don't know"
     },
     add_term: {
       standard_term: "What's the standard term you want to add?",

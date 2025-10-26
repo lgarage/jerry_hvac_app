@@ -219,6 +219,10 @@ async function editPart(partId) {
   document.getElementById('partCategory').value = part.category;
   document.querySelector(`input[name="partType"][value="${part.type}"]`).checked = true;
   document.getElementById('partPrice').value = parseFloat(part.price).toFixed(2);
+  document.getElementById('partBrand').value = part.brand || '';
+  document.getElementById('partVendor').value = part.vendor || '';
+  document.getElementById('partVendorPartNumber').value = part.vendor_part_number || '';
+  document.getElementById('partManufacturerPartNumber').value = part.manufacturer_part_number || '';
 
   // Load terminology matches
   await loadTerminologyMatches(part.name);
@@ -279,7 +283,11 @@ async function handlePartSubmit(e) {
     type: document.querySelector('input[name="partType"]:checked').value,
     price: parseFloat(document.getElementById('partPrice').value),
     thumbnail_url: 'https://via.placeholder.com/150?text=' + encodeURIComponent(document.getElementById('partName').value.substring(0, 10)),
-    common_uses: []
+    common_uses: [],
+    brand: document.getElementById('partBrand').value.trim() || null,
+    vendor: document.getElementById('partVendor').value.trim() || null,
+    vendor_part_number: document.getElementById('partVendorPartNumber').value.trim() || null,
+    manufacturer_part_number: document.getElementById('partManufacturerPartNumber').value.trim() || null
   };
 
   try {

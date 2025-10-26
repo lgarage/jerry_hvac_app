@@ -85,15 +85,18 @@ app.post('/api/parse', async (req, res) => {
         const result = await sql`
           INSERT INTO parts (
             part_number, name, description, category, type, price,
-            thumbnail_url, common_uses, embedding
+            thumbnail_url, common_uses, embedding,
+            brand, vendor, vendor_part_number, manufacturer_part_number
           ) VALUES (
             ${partNumber}, ${partDetails.name}, ${partDetails.description || rawTranscription},
             ${partDetails.category || 'Other'}, ${partDetails.type || 'inventory'},
             ${parseFloat(partDetails.price)},
             ${'https://via.placeholder.com/150?text=' + encodeURIComponent(partDetails.name.substring(0, 10))},
-            ${[]}, ${embeddingStr}::vector(1536)
+            ${[]}, ${embeddingStr}::vector(1536),
+            ${partDetails.brand || null}, ${partDetails.vendor || null},
+            ${partDetails.vendor_part_number || null}, ${partDetails.manufacturer_part_number || null}
           )
-          RETURNING id, part_number, name, category, type, price
+          RETURNING id, part_number, name, category, type, price, brand, vendor, vendor_part_number, manufacturer_part_number
         `;
 
         console.log(`✅ Added new part via voice: ${partDetails.name}`);
@@ -287,14 +290,17 @@ app.post('/api/continue-command', async (req, res) => {
       const result = await sql`
         INSERT INTO parts (
           part_number, name, description, category, type, price,
-          thumbnail_url, common_uses, embedding
+          thumbnail_url, common_uses, embedding,
+          brand, vendor, vendor_part_number, manufacturer_part_number
         ) VALUES (
           ${partNumber}, ${updatedData.name}, ${'Added via voice command'},
           ${category}, ${type}, ${price},
           ${'https://via.placeholder.com/150?text=' + encodeURIComponent(updatedData.name.substring(0, 10))},
-          ${[]}, ${embeddingStr}::vector(1536)
+          ${[]}, ${embeddingStr}::vector(1536),
+          ${updatedData.brand || null}, ${updatedData.vendor || null},
+          ${updatedData.vendor_part_number || null}, ${updatedData.manufacturer_part_number || null}
         )
-        RETURNING id, part_number, name, category, type, price
+        RETURNING id, part_number, name, category, type, price, brand, vendor, vendor_part_number, manufacturer_part_number
       `;
 
       console.log(`✅ Added new part via conversation: ${updatedData.name}`);
@@ -601,41 +607,45 @@ Extract part details from natural speech. Be VERY flexible and try to extract as
 
 Look for:
 - Part name (REQUIRED): The main name/description of the part
-- Price: Dollar amount - be creative in finding it ("$45", "forty-five dollars", "costs 45", "about $50", "fifty bucks")
+- Price (REQUIRED): Dollar amount - be creative in finding it ("$45", "forty-five dollars", "costs 45", "about $50", "fifty bucks")
 - Category: electrical, refrigerant, controls, filters, supplies, other (if not mentioned, infer from part name or use "Other")
 - Type: "consumable" or "inventory" (default to "inventory" if not mentioned)
+- Brand: The brand or manufacturer (e.g., "Honeywell", "Carrier", "Trane", "Copeland")
+- Vendor: Who you buy it from (e.g., "Johnstone", "Ferguson", "Home Depot")
+- Vendor part number: The vendor's SKU/part number
+- Manufacturer part number: The manufacturer's part number
 
 IMPORTANT:
 - Try HARD to find the price in the text, even if it's approximate
-- If category isn't mentioned, infer it from the part name (e.g., "refrigerant" → Refrigerant, "actuator" → Electrical, "filter" → Filters)
-- If you can extract name and price, mark success=true even if other fields are missing
+- If category isn't mentioned, infer it from the part name
+- Extract brand from the part name if present (e.g., "Honeywell damper actuator" → brand: "Honeywell")
+- Only name and price are CRITICAL - everything else is optional
+- If you can extract name and price, mark success=true
 - Only mark success=false if name OR price is truly missing
 
 Examples:
-"Add new part, Honeywell damper actuator, $45, electrical"
-→ name: "Honeywell Damper Actuator", price: 45.00, category: "Electrical", type: "inventory", success: true
+"Add Honeywell damper actuator, $45, electrical, from Johnstone"
+→ name: "Honeywell Damper Actuator", price: 45.00, category: "Electrical", brand: "Honeywell", vendor: "Johnstone", success: true
 
-"Add Trane compressor contactor, costs about $35, it's a consumable"
-→ name: "Trane Compressor Contactor", price: 35.00, category: "Electrical", type: "consumable", success: true
+"Add Trane compressor contactor, $35, vendor part number TC123"
+→ name: "Trane Compressor Contactor", price: 35.00, category: "Electrical", brand: "Trane", vendor_part_number: "TC123", success: true
 
-"Create part called R-22 refrigerant, $85 per pound"
-→ name: "R-22 Refrigerant (per lb)", price: 85.00, category: "Refrigerant", type: "consumable", success: true
-
-"Add damper actuator, forty-five dollars"
-→ name: "Damper Actuator", price: 45.00, category: "Electrical", type: "inventory", success: true
-
-"Add carrier fan motor sixty five dollars electrical"
-→ name: "Carrier Fan Motor", price: 65.00, category: "Electrical", type: "inventory", success: true
+"Add Carrier fan motor sixty five dollars from Ferguson part number FM-500, manufacturer number CFM-500"
+→ name: "Carrier Fan Motor", price: 65.00, brand: "Carrier", vendor: "Ferguson", vendor_part_number: "FM-500", manufacturer_part_number: "CFM-500", success: true
 
 Return JSON:
 {
   "name": "cleaned part name" or null,
   "price": numeric_value or null,
-  "category": "category_name" (inferred if possible, or "Other"),
+  "category": "category_name" (inferred or "Other"),
   "type": "consumable" or "inventory",
+  "brand": "brand name" or null,
+  "vendor": "vendor name" or null,
+  "vendor_part_number": "vendor SKU" or null,
+  "manufacturer_part_number": "manufacturer part number" or null,
   "description": "full utterance",
   "success": true if name AND price found, false otherwise,
-  "missing_fields": ["field1"] if any CRITICAL fields missing (only name and price are critical)
+  "missing_fields": ["field1"] if CRITICAL fields missing
 }`;
 
     const completion = await openai.chat.completions.create({
@@ -1440,7 +1450,7 @@ app.get('/api/parts/all', async (req, res) => {
 // Add new part
 app.post('/api/parts', async (req, res) => {
   try {
-    const { part_number, name, description, category, type, price, thumbnail_url, common_uses } = req.body;
+    const { part_number, name, description, category, type, price, thumbnail_url, common_uses, brand, vendor, vendor_part_number, manufacturer_part_number } = req.body;
 
     if (!part_number || !name || !category || !type || price === undefined) {
       return res.status(400).json({ error: 'part_number, name, category, type, and price are required' });
@@ -1467,7 +1477,11 @@ app.post('/api/parts', async (req, res) => {
         price,
         thumbnail_url,
         common_uses,
-        embedding
+        embedding,
+        brand,
+        vendor,
+        vendor_part_number,
+        manufacturer_part_number
       ) VALUES (
         ${part_number},
         ${name},
@@ -1477,9 +1491,13 @@ app.post('/api/parts', async (req, res) => {
         ${parseFloat(price)},
         ${thumbnail_url || ''},
         ${common_uses || []},
-        ${embeddingStr}::vector(1536)
+        ${embeddingStr}::vector(1536),
+        ${brand || null},
+        ${vendor || null},
+        ${vendor_part_number || null},
+        ${manufacturer_part_number || null}
       )
-      RETURNING id, part_number, name, category, type, price
+      RETURNING id, part_number, name, category, type, price, brand, vendor, vendor_part_number, manufacturer_part_number
     `;
 
     console.log(`✓ Added new part: ${name} (${part_number})`);
@@ -1499,7 +1517,7 @@ app.post('/api/parts', async (req, res) => {
 app.put('/api/parts/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { part_number, name, description, category, type, price, thumbnail_url, common_uses } = req.body;
+    const { part_number, name, description, category, type, price, thumbnail_url, common_uses, brand, vendor, vendor_part_number, manufacturer_part_number } = req.body;
 
     if (!part_number || !name || !category || !type || price === undefined) {
       return res.status(400).json({ error: 'part_number, name, category, type, and price are required' });
@@ -1528,9 +1546,13 @@ app.put('/api/parts/:id', async (req, res) => {
         thumbnail_url = ${thumbnail_url || ''},
         common_uses = ${common_uses || []},
         embedding = ${embeddingStr}::vector(1536),
+        brand = ${brand || null},
+        vendor = ${vendor || null},
+        vendor_part_number = ${vendor_part_number || null},
+        manufacturer_part_number = ${manufacturer_part_number || null},
         updated_at = NOW()
       WHERE id = ${id}
-      RETURNING id, part_number, name, category, type, price
+      RETURNING id, part_number, name, category, type, price, brand, vendor, vendor_part_number, manufacturer_part_number
     `;
 
     if (result.length === 0) {
