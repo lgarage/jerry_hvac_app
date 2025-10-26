@@ -127,6 +127,21 @@ if (addPartForm) {
   addPartForm.addEventListener('submit', handleAddPart);
 }
 
+// Toggle transcription viewer
+const toggleTranscriptionBtn = document.getElementById('toggleTranscription');
+if (toggleTranscriptionBtn) {
+  toggleTranscriptionBtn.addEventListener('click', () => {
+    const transcriptionText = document.getElementById('modalTranscriptionText');
+    if (transcriptionText) {
+      if (transcriptionText.style.display === 'none') {
+        transcriptionText.style.display = 'block';
+      } else {
+        transcriptionText.style.display = 'none';
+      }
+    }
+  });
+}
+
 // Keyboard toggle functionality
 keyboardToggle.addEventListener('click', toggleKeyboardMode);
 
@@ -2138,6 +2153,12 @@ function closeAddPartModal() {
 
   // Hide AI status indicator
   hideModalAiStatus();
+
+  // Hide transcription section
+  const transcriptionSection = document.getElementById('modalTranscription');
+  if (transcriptionSection) {
+    transcriptionSection.classList.add('hidden');
+  }
 }
 
 async function startModalRecording() {
@@ -2231,6 +2252,18 @@ async function processModalAudio(audioBlob) {
     }
 
     const result = await response.json();
+
+    // Show raw transcription
+    if (result.transcription) {
+      const transcriptionSection = document.getElementById('modalTranscription');
+      const transcriptionText = document.getElementById('modalTranscriptionText');
+
+      if (transcriptionSection && transcriptionText) {
+        transcriptionText.textContent = result.transcription;
+        transcriptionText.style.display = 'block'; // Show by default
+        transcriptionSection.classList.remove('hidden');
+      }
+    }
 
     // Fill form with extracted details
     if (result.partDetails) {
