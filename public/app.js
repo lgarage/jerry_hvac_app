@@ -133,10 +133,13 @@ if (toggleTranscriptionBtn) {
   toggleTranscriptionBtn.addEventListener('click', () => {
     const transcriptionText = document.getElementById('modalTranscriptionText');
     if (transcriptionText) {
-      if (transcriptionText.style.display === 'none') {
-        transcriptionText.style.display = 'block';
+      const isHidden = transcriptionText.classList.contains('hidden');
+      if (isHidden) {
+        transcriptionText.classList.remove('hidden');
+        toggleTranscriptionBtn.textContent = 'Hide';
       } else {
-        transcriptionText.style.display = 'none';
+        transcriptionText.classList.add('hidden');
+        toggleTranscriptionBtn.textContent = 'Show';
       }
     }
   });
@@ -2257,11 +2260,15 @@ async function processModalAudio(audioBlob) {
     if (result.transcription) {
       const transcriptionSection = document.getElementById('modalTranscription');
       const transcriptionText = document.getElementById('modalTranscriptionText');
+      const toggleBtn = document.getElementById('toggleTranscription');
 
       if (transcriptionSection && transcriptionText) {
         transcriptionText.textContent = result.transcription;
-        transcriptionText.style.display = 'block'; // Show by default
+        transcriptionText.classList.remove('hidden'); // Show by default
         transcriptionSection.classList.remove('hidden');
+        if (toggleBtn) {
+          toggleBtn.textContent = 'Hide'; // Button shows "Hide" since text is visible
+        }
       }
     }
 
