@@ -5,6 +5,7 @@ let currentRepairs = []; // In-memory storage for repairs
 let currentRepairIndex = null; // Track which repair is getting parts
 let recordingStartTime = null;
 let recordingTimerInterval = null;
+let partsStatus = {}; // Cache for parts existence status
 
 // Conversational command state
 let conversationState = null; // Tracks multi-step voice commands
@@ -1443,8 +1444,11 @@ async function processNewTermAudio(audioBlob, termInfo, index) {
   }
 }
 
-function renderRepairs() {
+async function renderRepairs() {
   repairGrid.innerHTML = '';
+
+  // Check all parts against database
+  await checkPartsInDatabase();
 
   currentRepairs.forEach((repair, index) => {
     const repairCard = createRepairCard(repair, index);
@@ -1470,6 +1474,38 @@ function renderRepairs() {
     submitFinalBtn.innerHTML = '<span>✓ Submit Final Repairs</span>';
     submitFinalBtn.addEventListener('click', submitFinalRepairs);
     repairGrid.appendChild(submitFinalBtn);
+  }
+}
+
+async function checkPartsInDatabase() {
+  // Collect all unique parts from all repairs
+  const allParts = new Set();
+  currentRepairs.forEach(repair => {
+    if (repair.parts && repair.parts.length > 0) {
+      repair.parts.forEach(part => allParts.add(part));
+    }
+  });
+
+  if (allParts.size === 0) return;
+
+  try {
+    const response = await fetch('/api/parts/check', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ parts: Array.from(allParts) })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      partsStatus = {};
+      data.results.forEach(result => {
+        partsStatus[result.part] = result.exists;
+      });
+    }
+  } catch (error) {
+    console.error('Error checking parts:', error);
   }
 }
 
@@ -1532,10 +1568,39 @@ function createRepairCard(repair, index) {
     const partsList = document.createElement('div');
     partsList.className = 'list-items';
     repair.parts.forEach(part => {
+      const partWrapper = document.createElement('div');
+      partWrapper.className = 'part-item-wrapper';
+
       const partItem = document.createElement('span');
       partItem.className = 'list-item';
+
+      // Check if part is in database
+      const isInDatabase = partsStatus[part];
+      if (isInDatabase === false) {
+        partItem.classList.add('part-not-in-database');
+      }
+
       partItem.textContent = part;
-      partsList.appendChild(partItem);
+      partWrapper.appendChild(partItem);
+
+      // Add "Not in DB" badge and button if part is not in database
+      if (isInDatabase === false) {
+        const badge = document.createElement('span');
+        badge.className = 'not-in-db-badge';
+        badge.textContent = 'Not in DB';
+        partWrapper.appendChild(badge);
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'add-part-btn';
+        addBtn.textContent = '+ Add';
+        addBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showStatus(`Adding "${part}" to database is not yet implemented in this view. Use the parts search modal or voice commands.`, 'info');
+        });
+        partWrapper.appendChild(addBtn);
+      }
+
+      partsList.appendChild(partWrapper);
     });
 
     partsSection.appendChild(partsList);
