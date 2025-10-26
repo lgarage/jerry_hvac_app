@@ -684,6 +684,11 @@ function displayResults(result) {
   if (result.newTerms && result.newTerms.length > 0) {
     showNewTermSuggestions(result.newTerms);
   }
+
+  // Show new part suggestions (add to parts catalog)
+  if (result.newParts && result.newParts.length > 0) {
+    showNewPartSuggestions(result.newParts);
+  }
 }
 
 // Show conversational prompt for missing fields
@@ -1271,6 +1276,110 @@ function showNewTermSuggestions(newTerms) {
   setTimeout(() => {
     container.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, 100);
+}
+
+// Show new part suggestions (add to parts catalog)
+function showNewPartSuggestions(newParts) {
+  // Remove any existing new parts UI
+  const existingNewParts = document.getElementById('newPartSuggestions');
+  if (existingNewParts) {
+    existingNewParts.remove();
+  }
+
+  const container = document.createElement('div');
+  container.id = 'newPartSuggestions';
+  container.style.cssText = `
+    background: #eff6ff;
+    border: 2px solid #3b82f6;
+    border-radius: 12px;
+    padding: 16px;
+    margin: 16px 0;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+  `;
+
+  const title = document.createElement('h3');
+  title.textContent = '📦 Add to Parts Catalog?';
+  title.style.cssText = `
+    color: #1e40af;
+    margin: 0 0 12px 0;
+    font-size: 1.1rem;
+  `;
+  container.appendChild(title);
+
+  const description = document.createElement('p');
+  description.textContent = 'I noticed these parts that aren\'t in the catalog yet:';
+  description.style.cssText = `
+    color: #1e40af;
+    margin: 0 0 12px 0;
+    font-size: 0.9rem;
+  `;
+  container.appendChild(description);
+
+  newParts.forEach((partInfo) => {
+    const partItem = document.createElement('div');
+    partItem.style.cssText = `
+      background: white;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      border-left: 4px solid #3b82f6;
+    `;
+
+    partItem.innerHTML = `
+      <div style="margin-bottom: 8px;">
+        <strong style="color: #1f2937;">Detected:</strong> "<span style="color: #3b82f6; font-weight: 600;">${partInfo.phrase}</span>"
+        ${partInfo.bestMatch ? `<br><small style="color: #6b7280;">Closest match: ${partInfo.bestMatch} (${Math.round(partInfo.similarity * 100)}%)</small>` : ''}
+        ${partInfo.quantity > 1 ? `<br><small style="color: #6b7280;">Quantity: ${partInfo.quantity}</small>` : ''}
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <button class="btn-add-part-yes" style="background: #3b82f6; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.95rem; transition: all 0.2s;">
+          ✓ Add to Catalog
+        </button>
+        <button class="btn-add-part-no" style="background: #6b7280; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.95rem;">
+          ✗ Skip
+        </button>
+      </div>
+    `;
+
+    container.appendChild(partItem);
+
+    // Add event listeners
+    const yesBtn = partItem.querySelector('.btn-add-part-yes');
+    const noBtn = partItem.querySelector('.btn-add-part-no');
+
+    yesBtn.addEventListener('click', () => {
+      // Start conversational prompt for this part
+      conversationState = {
+        type: 'add_part',
+        data: {
+          name: partInfo.phrase // Pre-fill the name
+        },
+        missingFields: ['price'], // Still need price at minimum
+        rawCommand: `Add part from suggestion: ${partInfo.phrase}`
+      };
+
+      // Remove all suggestion UIs
+      container.remove();
+
+      // Show the conversational prompt
+      showConversationalPrompt();
+    });
+
+    noBtn.addEventListener('click', () => {
+      partItem.remove();
+      if (container.querySelectorAll('.btn-add-part-yes').length === 0) {
+        container.remove();
+      }
+    });
+  });
+
+  // Insert after any new term suggestions or at the end of results
+  const existingTermSuggestions = document.getElementById('newTermSuggestions');
+  if (existingTermSuggestions) {
+    existingTermSuggestions.after(container);
+  } else {
+    resultsSection.appendChild(container);
+  }
 }
 
 async function processNewTermAudio(audioBlob, termInfo, index) {

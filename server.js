@@ -183,14 +183,27 @@ app.post('/api/parse', async (req, res) => {
     const parsedRepairs = await parseRepairs(transcription, rawTranscription);
 
     // Auto-match parts from catalog for each repair
-    const repairsWithParts = await autoMatchParts(parsedRepairs);
+    const { repairs: repairsWithParts, unmatchedParts } = await autoMatchParts(parsedRepairs);
+
+    // Use Agent 2 to filter garbage from real parts (same logic as terms)
+    let newParts = [];
+    if (unmatchedParts.length > 0) {
+      const evaluations = await filterTechnicalTerms(unmatchedParts);
+      newParts = unmatchedParts
+        .filter((part, idx) => {
+          const evaluation = evaluations[idx];
+          return evaluation && evaluation.is_technical_term;
+        })
+        .slice(0, 3); // Limit to top 3 to avoid overwhelming user
+    }
 
     res.json({
       raw_transcription: rawTranscription, // Original text before normalization
       transcription, // Normalized text with standard terminology
       repairs: repairsWithParts,
       suggestions, // Send terminology suggestions to frontend for confirmation
-      newTerms // Send potential new terms to add to glossary
+      newTerms, // Send potential new terms to add to glossary
+      newParts // Send potential new parts to add to catalog
     });
 
   } catch (error) {
@@ -1018,9 +1031,11 @@ Return ONLY valid JSON array, no additional text.`;
 
 // Auto-match parts from catalog using semantic search
 async function autoMatchParts(repairs) {
-  if (!repairs || repairs.length === 0) return repairs;
+  if (!repairs || repairs.length === 0) return { repairs, unmatchedParts: [] };
 
   console.log('\n🔍 Auto-matching parts from catalog...');
+
+  const unmatchedParts = []; // Collect parts that don't match
 
   for (const repair of repairs) {
     if (!repair.parts || repair.parts.length === 0) continue;
@@ -1033,6 +1048,7 @@ async function autoMatchParts(repairs) {
         const { quantity, searchTerm, refrigerantCode } = extractQuantityAndTerm(partString);
 
         let matchedPart = null;
+        let bestMatch = null; // Track best match for unmatched parts
 
         // CRITICAL SAFETY CHECK: For refrigerants, require EXACT code match
         // Never allow cross-refrigerant matching (R-22 ≠ R-410A)
@@ -1068,6 +1084,14 @@ async function autoMatchParts(repairs) {
             console.log(`  ✓ "${partString}" → ${matchedPart.name} (qty: ${quantity}, EXACT refrigerant match)`);
           } else {
             console.log(`  ✗ "${partString}" → No exact refrigerant match for ${refrigerantCode}`);
+            // Collect as unmatched part
+            unmatchedParts.push({
+              phrase: partString,
+              searchTerm: searchTerm,
+              bestMatch: null,
+              similarity: 0,
+              quantity: quantity
+            });
           }
 
         } else {
@@ -1098,9 +1122,19 @@ async function autoMatchParts(repairs) {
 
           if (results.length > 0 && results[0].similarity > 0.6) {
             matchedPart = results[0];
+            bestMatch = results[0];
             console.log(`  ✓ "${partString}" → ${matchedPart.name} (qty: ${quantity}, ${(matchedPart.similarity * 100).toFixed(0)}% match)`);
           } else {
+            bestMatch = results[0];
             console.log(`  ✗ "${partString}" → No match found (best: ${results[0] ? (results[0].similarity * 100).toFixed(0) : 0}%)`);
+            // Collect as unmatched part
+            unmatchedParts.push({
+              phrase: partString,
+              searchTerm: searchTerm,
+              bestMatch: bestMatch ? bestMatch.name : null,
+              similarity: bestMatch ? parseFloat(bestMatch.similarity) : 0,
+              quantity: quantity
+            });
           }
         }
 
@@ -1125,7 +1159,8 @@ async function autoMatchParts(repairs) {
   }
 
   console.log('✓ Auto-matching complete\n');
-  return repairs;
+  console.log(`  Found ${unmatchedParts.length} unmatched part(s)`);
+  return { repairs, unmatchedParts };
 }
 
 // Extract quantity and clean search term from part string
