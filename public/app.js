@@ -2104,6 +2104,9 @@ function closeAddPartModal() {
   if (isModalRecording) {
     stopModalRecording();
   }
+
+  // Hide AI status indicator
+  hideModalAiStatus();
 }
 
 async function toggleModalRecording() {
@@ -2152,11 +2155,14 @@ async function startModalRecording() {
     if (modalRecordBtn) modalRecordBtn.classList.add('recording');
     if (modalRecordIcon) modalRecordIcon.textContent = '⏹️';
     if (modalRecordText) modalRecordText.textContent = 'Stop Recording';
-    showStatus('Recording part details... Click again to stop.', 'info');
+
+    // Show AI status indicator
+    showModalAiStatus('🎤 Recording...', 'Speak now to describe the part');
 
   } catch (error) {
     console.error('Error starting modal recording:', error);
     showStatus('Could not access microphone. Please check permissions.', 'error');
+    hideModalAiStatus();
   }
 }
 
@@ -2172,7 +2178,9 @@ function stopModalRecording() {
     if (modalRecordBtn) modalRecordBtn.classList.remove('recording');
     if (modalRecordIcon) modalRecordIcon.textContent = '🎤';
     if (modalRecordText) modalRecordText.textContent = 'Record Part Details';
-    showStatus('Processing audio...', 'info');
+
+    // Show processing status
+    showModalAiStatus('⏳ Processing audio...', 'Converting to text');
   }
 }
 
@@ -2186,7 +2194,7 @@ async function processModalAudio(audioBlob) {
     const base64Audio = await blobToBase64(wavBlob);
 
     // Send to backend to parse part details
-    showStatus('Extracting part details from audio...', 'info');
+    showModalAiStatus('🤖 AI is analyzing...', 'Extracting part details from your description');
 
     const response = await fetch('/api/parts/parse-details', {
       method: 'POST',
@@ -2207,20 +2215,46 @@ async function processModalAudio(audioBlob) {
 
     // Fill form with extracted details
     if (result.partDetails) {
-      document.getElementById('partName').value = result.partDetails.name || currentPartToAdd;
-      document.getElementById('partNumber').value = result.partDetails.part_number || '';
-      document.getElementById('partCategory').value = result.partDetails.category || '';
-      document.getElementById('partType').value = result.partDetails.type || '';
-      document.getElementById('partPrice').value = result.partDetails.price || '';
-      document.getElementById('partDescription').value = result.partDetails.description || '';
-      document.getElementById('partCommonUses').value = result.partDetails.common_uses || '';
+      showModalAiStatus('✨ Populating fields...', 'AI is filling in the form');
 
-      showStatus('Part details extracted! Review and edit as needed.', 'success');
+      // Animate the field population with slight delays
+      setTimeout(() => {
+        document.getElementById('partName').value = result.partDetails.name || currentPartToAdd;
+      }, 100);
+      setTimeout(() => {
+        document.getElementById('partNumber').value = result.partDetails.part_number || '';
+      }, 200);
+      setTimeout(() => {
+        document.getElementById('partCategory').value = result.partDetails.category || '';
+      }, 300);
+      setTimeout(() => {
+        document.getElementById('partType').value = result.partDetails.type || '';
+      }, 400);
+      setTimeout(() => {
+        document.getElementById('partPrice').value = result.partDetails.price || '';
+      }, 500);
+      setTimeout(() => {
+        document.getElementById('partDescription').value = result.partDetails.description || '';
+      }, 600);
+      setTimeout(() => {
+        document.getElementById('partCommonUses').value = result.partDetails.common_uses || '';
+      }, 700);
+
+      // Show success and hide after delay
+      setTimeout(() => {
+        showModalAiStatus('✓ Details extracted!', 'Review the information below', true);
+        setTimeout(() => {
+          hideModalAiStatus();
+        }, 3000);
+      }, 800);
     }
 
   } catch (error) {
     console.error('Error processing modal audio:', error);
-    showStatus('Error processing audio. Please fill in the fields manually.', 'error');
+    showModalAiStatus('❌ Error processing audio', 'Please fill in the fields manually', true);
+    setTimeout(() => {
+      hideModalAiStatus();
+    }, 3000);
   }
 }
 
@@ -2274,5 +2308,38 @@ async function handleAddPart(e) {
   } catch (error) {
     console.error('Error adding part:', error);
     showStatus(`Error: ${error.message}`, 'error');
+  }
+}
+
+// Helper functions for modal AI status indicator
+function showModalAiStatus(mainText, subtext, isComplete = false) {
+  const statusDiv = document.getElementById('modalAiStatus');
+  const mainTextDiv = document.getElementById('modalAiStatusText');
+  const subtextDiv = document.getElementById('modalAiStatusSubtext');
+
+  if (statusDiv && mainTextDiv && subtextDiv) {
+    mainTextDiv.textContent = mainText;
+    subtextDiv.textContent = subtext;
+    statusDiv.classList.remove('hidden');
+
+    // If complete (success or error), change styling
+    if (isComplete) {
+      const spinner = statusDiv.querySelector('.loading-spinner');
+      if (spinner) {
+        spinner.style.display = 'none';
+      }
+    } else {
+      const spinner = statusDiv.querySelector('.loading-spinner');
+      if (spinner) {
+        spinner.style.display = 'block';
+      }
+    }
+  }
+}
+
+function hideModalAiStatus() {
+  const statusDiv = document.getElementById('modalAiStatus');
+  if (statusDiv) {
+    statusDiv.classList.add('hidden');
   }
 }

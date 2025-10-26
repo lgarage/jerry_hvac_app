@@ -868,6 +868,17 @@
           </button>
         </div>
 
+        <!-- AI Processing Indicator -->
+        <div id="modalAiStatus" class="hidden" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px; border-radius: 8px; margin-bottom: 20px; text-align: center; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);">
+          <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
+            <div class="loading-spinner" style="border-color: rgba(255, 255, 255, 0.3); border-top-color: white;"></div>
+            <div>
+              <div id="modalAiStatusText" style="font-weight: 600; font-size: 1rem; margin-bottom: 4px;">Processing...</div>
+              <div id="modalAiStatusSubtext" style="font-size: 0.85rem; opacity: 0.9;">Please wait</div>
+            </div>
+          </div>
+        </div>
+
         <form id="addPartForm">
           <div style="margin-bottom: 16px;">
             <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #374151; font-size: 0.9rem;">Part Name *</label>
