@@ -597,33 +597,45 @@ async function parsePartFromVoice(text) {
 
     const systemPrompt = `You are a part information extraction agent.
 
-Extract part details from natural speech. Be flexible with how information is provided.
+Extract part details from natural speech. Be VERY flexible and try to extract as much as possible from a single utterance.
 
 Look for:
 - Part name (REQUIRED): The main name/description of the part
-- Price (REQUIRED): Dollar amount, can be approximate ("about $45", "$35", "forty-five dollars")
-- Category: electrical, refrigerant, controls, filters, supplies, other
-- Type: "consumable" or "inventory" (default to "inventory" if not specified)
+- Price: Dollar amount - be creative in finding it ("$45", "forty-five dollars", "costs 45", "about $50", "fifty bucks")
+- Category: electrical, refrigerant, controls, filters, supplies, other (if not mentioned, infer from part name or use "Other")
+- Type: "consumable" or "inventory" (default to "inventory" if not mentioned)
+
+IMPORTANT:
+- Try HARD to find the price in the text, even if it's approximate
+- If category isn't mentioned, infer it from the part name (e.g., "refrigerant" → Refrigerant, "actuator" → Electrical, "filter" → Filters)
+- If you can extract name and price, mark success=true even if other fields are missing
+- Only mark success=false if name OR price is truly missing
 
 Examples:
 "Add new part, Honeywell damper actuator, $45, electrical"
-→ name: "Honeywell Damper Actuator", price: 45.00, category: "Electrical", type: "inventory"
+→ name: "Honeywell Damper Actuator", price: 45.00, category: "Electrical", type: "inventory", success: true
 
-"Add Trane compressor contactor, costs about $35, it's a consumable electrical part"
-→ name: "Trane Compressor Contactor", price: 35.00, category: "Electrical", type: "consumable"
+"Add Trane compressor contactor, costs about $35, it's a consumable"
+→ name: "Trane Compressor Contactor", price: 35.00, category: "Electrical", type: "consumable", success: true
 
 "Create part called R-22 refrigerant, $85 per pound"
-→ name: "R-22 Refrigerant (per lb)", price: 85.00, category: "Refrigerant", type: "consumable"
+→ name: "R-22 Refrigerant (per lb)", price: 85.00, category: "Refrigerant", type: "consumable", success: true
+
+"Add damper actuator, forty-five dollars"
+→ name: "Damper Actuator", price: 45.00, category: "Electrical", type: "inventory", success: true
+
+"Add carrier fan motor sixty five dollars electrical"
+→ name: "Carrier Fan Motor", price: 65.00, category: "Electrical", type: "inventory", success: true
 
 Return JSON:
 {
-  "name": "cleaned part name",
-  "price": numeric_value,
-  "category": "category_name",
+  "name": "cleaned part name" or null,
+  "price": numeric_value or null,
+  "category": "category_name" (inferred if possible, or "Other"),
   "type": "consumable" or "inventory",
-  "description": "full utterance as description",
-  "success": true/false,
-  "missing_fields": ["field1", "field2"] if any required fields missing
+  "description": "full utterance",
+  "success": true if name AND price found, false otherwise,
+  "missing_fields": ["field1"] if any CRITICAL fields missing (only name and price are critical)
 }`;
 
     const completion = await openai.chat.completions.create({
@@ -640,11 +652,18 @@ Return JSON:
     console.log('  Part extraction response:', responseText);
 
     const result = JSON.parse(responseText);
+
+    // Ensure we have defaults for optional fields
+    if (result.success) {
+      result.category = result.category || 'Other';
+      result.type = result.type || 'inventory';
+    }
+
     return result;
 
   } catch (error) {
     console.error('❌ Part parsing failed:', error.message);
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, missing_fields: ['name', 'price'] };
   }
 }
 
@@ -655,35 +674,45 @@ async function parseTermFromVoice(text) {
 
     const systemPrompt = `You are a terminology extraction agent for HVAC terminology.
 
-Extract term details from natural speech.
+Extract term details from natural speech. Be VERY flexible and try to extract as much as possible from a single utterance.
 
 Look for:
 - Standard term (REQUIRED): The correct way to write the term
-- Category (REQUIRED): refrigerant, equipment, voltage, measurement, part_type, action, brand, other
+- Category: refrigerant, equipment, voltage, measurement, part_type, action, brand, other (infer from context if not mentioned)
 - Variations: Different ways it might be said/spelled (if mentioned)
 - Description: Any context provided
 
+IMPORTANT:
+- Try to infer category from the term itself if not explicitly stated
+- If you can extract standard_term and category, mark success=true
+- Variations are optional - if not mentioned, just use the standard term
+- Only mark success=false if standard_term OR category cannot be determined
+
 Examples:
 "Add new term, R-22, refrigerant, variations are R22, R 22, twenty-two"
-→ standard_term: "R-22", category: "refrigerant", variations: ["R22", "R 22", "twenty-two"]
+→ standard_term: "R-22", category: "refrigerant", variations: ["R-22", "R22", "R 22", "twenty-two"], success: true
 
 "Add to glossary RTU, equipment type, also called roof top unit"
-→ standard_term: "RTU", category: "equipment", variations: ["roof top unit", "rooftop unit"]
+→ standard_term: "RTU", category: "equipment", variations: ["RTU", "roof top unit", "rooftop unit"], success: true
 
-"Create term damper actuator, it's a part type, sometimes called damper motor"
-→ standard_term: "damper actuator", category: "part_type", variations: ["damper motor"]
+"Create term damper actuator, it's a part type"
+→ standard_term: "damper actuator", category: "part_type", variations: ["damper actuator"], success: true
+
+"Add R-410A refrigerant"
+→ standard_term: "R-410A", category: "refrigerant", variations: ["R-410A"], success: true
+
+"Add compressor brand Copeland"
+→ standard_term: "Copeland", category: "brand", variations: ["Copeland"], success: true
 
 Return JSON:
 {
-  "standard_term": "the correct term",
-  "category": "category_name",
-  "variations": ["variation1", "variation2"],
+  "standard_term": "the correct term" or null,
+  "category": "category_name" (inferred if possible, or "other"),
+  "variations": ["variation1", "variation2"] (always include standard_term),
   "description": "any description provided",
-  "success": true/false,
-  "missing_fields": ["field1"] if required fields missing
-}
-
-If no variations are explicitly mentioned, use the standard_term as the only variation.`;
+  "success": true if standard_term AND category found, false otherwise,
+  "missing_fields": ["field1"] if CRITICAL fields missing
+}`;
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -701,19 +730,21 @@ If no variations are explicitly mentioned, use the standard_term as the only var
     const result = JSON.parse(responseText);
 
     // Ensure variations array includes the standard term itself
-    if (result.success && result.variations) {
-      if (!result.variations.includes(result.standard_term)) {
+    if (result.success) {
+      result.category = result.category || 'other';
+
+      if (!result.variations || result.variations.length === 0) {
+        result.variations = [result.standard_term];
+      } else if (!result.variations.includes(result.standard_term)) {
         result.variations.unshift(result.standard_term);
       }
-    } else if (result.success) {
-      result.variations = [result.standard_term];
     }
 
     return result;
 
   } catch (error) {
     console.error('❌ Term parsing failed:', error.message);
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, missing_fields: ['standard_term', 'category'] };
   }
 }
 
