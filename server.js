@@ -221,14 +221,14 @@ app.post('/api/parse', async (req, res) => {
     // Auto-match parts from catalog for each repair
     const { repairs: repairsWithParts, unmatchedParts } = await autoMatchParts(parsedRepairs);
 
-    // Use Agent 2 to filter garbage from real parts (same logic as terms)
+    // Use Agent 3 to filter garbage from real parts (more lenient than Agent 2)
     let newParts = [];
     if (unmatchedParts.length > 0) {
-      const evaluations = await filterTechnicalTerms(unmatchedParts);
+      const evaluations = await filterPartSuggestions(unmatchedParts);
       newParts = unmatchedParts
         .filter((part, idx) => {
           const evaluation = evaluations[idx];
-          return evaluation && evaluation.is_technical_term;
+          return evaluation && evaluation.is_valid_part;
         })
         .slice(0, 3); // Limit to top 3 to avoid overwhelming user
     }
@@ -556,6 +556,97 @@ Be strict - when in doubt, reject it. Only accept clean, standalone technical te
     return potentialTerms.map(t => ({
       is_technical_term: false,
       reason: 'Agent evaluation failed, rejecting for safety'
+    }));
+  }
+}
+
+// Agent 3: Part Suggestion Filter (More Lenient than Agent 2)
+// Filters unmatched parts to avoid suggesting garbage while accepting unfamiliar brands/models
+async function filterPartSuggestions(unmatchedParts) {
+  if (!unmatchedParts || unmatchedParts.length === 0) return [];
+
+  try {
+    console.log('\n🤖 Agent 3: Filtering part suggestions...');
+
+    const systemPrompt = `You are a part suggestion filter for an HVAC repair documentation system.
+
+Your job: Distinguish real HVAC parts from sentence fragments in voice transcriptions.
+
+ACCEPT as valid parts:
+1. Equipment names with ANY brand/model: "XYZ actuator", "ABC compressor", "Model-123 motor"
+2. Generic part names: "actuator", "contactor", "capacitor", "compressor", "motor"
+3. Part specifications: "24V 3-pole contactor", "5-ton compressor", "3/4 HP motor"
+4. Refrigerant codes: "R-410A", "R-22", "R-134A"
+5. Technical components: "damper actuator", "TXV valve", "reversing valve"
+6. Filters and supplies: "air filter", "filter drier", "refrigerant oil"
+7. Parts with unfamiliar brands: Even if you don't recognize the brand name, if it follows the pattern "[Brand/Model] [Part Type]", accept it
+
+REJECT as sentence fragments if ANY apply:
+1. Starts with conjunction: "and also need", "but the", "or maybe"
+2. Starts with preposition: "of refrigerant", "with the damper", "at the unit"
+3. Contains action verbs: "need 10 pounds", "will replace", "should check"
+4. Contains pronouns: "I think", "it needs", "that is"
+5. Incomplete phrase: "also need", "will also", "and then"
+6. Just quantity words: "10 pounds", "5 lbs", "4 units" (without a part name)
+7. Non-part phrases: "the system", "the unit", "that thing"
+
+KEY DIFFERENCE from terminology filtering: Be MORE ACCEPTING of unfamiliar brands and model numbers.
+- "XYZ actuator" → ACCEPT (actuator is a real part type, even if XYZ is unknown)
+- "Honeywell damper" → ACCEPT (damper is a real part)
+- "Model-500 contactor" → ACCEPT (contactor is a real part)
+- "and also need" → REJECT (sentence fragment)
+
+For each unmatched part, return:
+{
+  "is_valid_part": boolean,
+  "reason": "brief explanation"
+}
+
+When in doubt about a brand name but the part type is clear (actuator, motor, etc.), ACCEPT it.`;
+
+    const partDescriptions = unmatchedParts.map((part, idx) =>
+      `Part ${idx + 1}: "${part.phrase}" (closest match: ${part.bestMatch || 'none'} at ${Math.round(part.similarity * 100)}%)`
+    ).join('\n');
+
+    const userPrompt = `Evaluate these unmatched parts:\n\n${partDescriptions}\n\nReturn format: {"evaluations": [{"is_valid_part": bool, "reason": "..."}, ...]}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Agent 3 raw response:', responseText);
+
+    const result = JSON.parse(responseText);
+    const evaluations = result.evaluations || [];
+
+    if (evaluations.length !== unmatchedParts.length) {
+      console.error(`  ⚠️  Agent 3 returned ${evaluations.length} evaluations for ${unmatchedParts.length} parts`);
+    }
+
+    evaluations.forEach((evaluation, idx) => {
+      const part = unmatchedParts[idx];
+      if (part) {
+        const status = evaluation.is_valid_part ? '✅ Valid part' : '❌ Sentence fragment';
+        console.log(`  ${status}: "${part.phrase}" - ${evaluation.reason}`);
+      }
+    });
+
+    return evaluations;
+
+  } catch (error) {
+    console.error('❌ Agent 3 evaluation failed:', error.message);
+    console.error('   Stack:', error.stack);
+    // Fallback: if agent fails, accept all (better to suggest than to miss)
+    return unmatchedParts.map(p => ({
+      is_valid_part: true,
+      reason: 'Agent evaluation failed, accepting as fallback'
     }));
   }
 }
