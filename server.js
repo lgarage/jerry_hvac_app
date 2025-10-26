@@ -1620,13 +1620,85 @@ app.post('/api/parts/check', async (req, res) => {
   }
 });
 
+// Parse part details from voice input
+app.post('/api/parts/parse-details', async (req, res) => {
+  try {
+    const { audio, text, partName } = req.body;
+    let transcription = text || '';
+
+    if (audio && !text) {
+      transcription = await transcribeAudio(audio);
+    }
+
+    if (!transcription) {
+      return res.status(400).json({ error: 'No input provided' });
+    }
+
+    // Use AI to extract structured part details
+    const systemPrompt = `You are an HVAC parts database assistant. Parse the spoken part details into structured data.
+
+Return a JSON object with:
+- name: string (part name)
+- part_number: string (manufacturer part number if mentioned, otherwise empty string "")
+- description: string (detailed description)
+- category: string (one of: "Electrical", "Mechanical", "Refrigeration", "Controls", "Filters", "Other")
+- type: string (either "consumable" or "inventory")
+- price: number (price if mentioned, otherwise 0)
+- common_uses: string (common applications or uses)
+
+If a field is not mentioned, make a reasonable inference based on the part name and context.
+
+Example input: "This is a Honeywell economizer actuator, part number M847D. It's used for damper control in RTUs. Costs about 150 dollars. This is an inventory item for mechanical systems."
+
+Example output:
+{
+  "name": "Honeywell Economizer Actuator",
+  "part_number": "M847D",
+  "description": "Honeywell economizer actuator for damper control",
+  "category": "Mechanical",
+  "type": "inventory",
+  "price": 150,
+  "common_uses": "Damper control in RTUs, economizer systems"
+}
+
+Return ONLY valid JSON object, no additional text.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Part being described: ${partName}\n\nUser's description: ${transcription}` }
+      ],
+      temperature: 0.3
+    });
+
+    const content = completion.choices[0].message.content.trim();
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('No valid JSON object found in response');
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    res.json({
+      transcription,
+      partDetails: parsed
+    });
+
+  } catch (error) {
+    console.error('Error parsing part details:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Add new part
 app.post('/api/parts', async (req, res) => {
   try {
     const { part_number, name, description, category, type, price, thumbnail_url, common_uses, brand, vendor, vendor_part_number, manufacturer_part_number } = req.body;
 
-    if (!part_number || !name || !category || !type || price === undefined) {
-      return res.status(400).json({ error: 'part_number, name, category, type, and price are required' });
+    if (!name || !category || !type) {
+      return res.status(400).json({ error: 'name, category, and type are required' });
     }
 
     // Generate embedding for the part
@@ -1656,12 +1728,12 @@ app.post('/api/parts', async (req, res) => {
         vendor_part_number,
         manufacturer_part_number
       ) VALUES (
-        ${part_number},
+        ${part_number || ''},
         ${name},
         ${description || ''},
         ${category},
         ${type},
-        ${parseFloat(price)},
+        ${parseFloat(price) || 0},
         ${thumbnail_url || ''},
         ${common_uses || []},
         ${embeddingStr}::vector(1536),

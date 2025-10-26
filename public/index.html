@@ -850,6 +850,82 @@
       </div>
     </div>
 
+    <!-- Add Part Modal -->
+    <div id="addPartModal" class="modal-overlay hidden">
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h2>Add Part to Database</h2>
+          <button class="close-btn" id="closeAddPartModal">&times;</button>
+        </div>
+
+        <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+          <p style="margin: 0 0 12px 0; color: #4b5563; font-size: 0.9rem;">
+            <strong>Speak the part details:</strong> Describe the part including name, part number, category, price, and any other relevant information.
+          </p>
+          <button id="modalRecordBtn" class="btn-secondary" style="width: 100%;">
+            <span id="modalRecordIcon">🎤</span>
+            <span id="modalRecordText">Record Part Details</span>
+          </button>
+        </div>
+
+        <form id="addPartForm">
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #374151; font-size: 0.9rem;">Part Name *</label>
+            <input type="text" id="partName" required placeholder="e.g., Honeywell Economizer Actuator" style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 0.95rem;">
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #374151; font-size: 0.9rem;">Part Number</label>
+            <input type="text" id="partNumber" placeholder="e.g., M847D" style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 0.95rem;">
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+            <div>
+              <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #374151; font-size: 0.9rem;">Category *</label>
+              <select id="partCategory" required style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 0.95rem;">
+                <option value="">Select category...</option>
+                <option value="Electrical">Electrical</option>
+                <option value="Mechanical">Mechanical</option>
+                <option value="Refrigeration">Refrigeration</option>
+                <option value="Controls">Controls</option>
+                <option value="Filters">Filters</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div>
+              <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #374151; font-size: 0.9rem;">Type *</label>
+              <select id="partType" required style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 0.95rem;">
+                <option value="">Select type...</option>
+                <option value="consumable">Consumable</option>
+                <option value="inventory">Inventory</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #374151; font-size: 0.9rem;">Price ($)</label>
+            <input type="number" id="partPrice" step="0.01" min="0" placeholder="0.00" style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 0.95rem;">
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #374151; font-size: 0.9rem;">Description</label>
+            <textarea id="partDescription" placeholder="Detailed description of the part..." style="width: 100%; min-height: 80px; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 0.95rem; resize: vertical;"></textarea>
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #374151; font-size: 0.9rem;">Common Uses</label>
+            <textarea id="partCommonUses" placeholder="e.g., Damper control in RTUs, economizer systems..." style="width: 100%; min-height: 80px; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 0.95rem; resize: vertical;"></textarea>
+          </div>
+
+          <div style="display: flex; gap: 12px; margin-top: 24px; padding-top: 16px; border-top: 2px solid #e5e7eb;">
+            <button type="button" class="btn-cancel" style="flex: 1; background: #6b7280; color: white; padding: 14px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer;">Cancel</button>
+            <button type="submit" class="btn-secondary" style="flex: 1;">Add Part to Database</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <!-- Parts Search Modal -->
     <div id="partsModal" class="modal-overlay hidden">
       <div class="modal-content">

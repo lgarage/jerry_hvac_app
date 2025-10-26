@@ -7,6 +7,12 @@ let recordingStartTime = null;
 let recordingTimerInterval = null;
 let partsStatus = {}; // Cache for parts existence status
 
+// Modal variables for adding parts
+let modalMediaRecorder = null;
+let modalAudioChunks = [];
+let isModalRecording = false;
+let currentPartToAdd = '';
+
 // Conversational command state
 let conversationState = null; // Tracks multi-step voice commands
 // Format: { type: 'add_part' | 'add_term', data: {}, nextField: 'name', rawCommand: '' }
@@ -96,6 +102,35 @@ closeModal.addEventListener('click', () => hidePartsModal());
 partsModal.addEventListener('click', (e) => {
   if (e.target === partsModal) hidePartsModal();
 });
+
+// Add Part Modal event listeners
+const addPartModal = document.getElementById('addPartModal');
+const closeAddPartModalBtn = document.getElementById('closeAddPartModal');
+const modalRecordBtn = document.getElementById('modalRecordBtn');
+const addPartForm = document.getElementById('addPartForm');
+const cancelBtn = document.querySelector('#addPartForm .btn-cancel');
+
+if (closeAddPartModalBtn) {
+  closeAddPartModalBtn.addEventListener('click', closeAddPartModal);
+}
+
+if (addPartModal) {
+  addPartModal.addEventListener('click', (e) => {
+    if (e.target === addPartModal) closeAddPartModal();
+  });
+}
+
+if (cancelBtn) {
+  cancelBtn.addEventListener('click', closeAddPartModal);
+}
+
+if (modalRecordBtn) {
+  modalRecordBtn.addEventListener('click', toggleModalRecording);
+}
+
+if (addPartForm) {
+  addPartForm.addEventListener('submit', handleAddPart);
+}
 
 // Keyboard toggle functionality
 keyboardToggle.addEventListener('click', toggleKeyboardMode);
@@ -1596,7 +1631,7 @@ function createRepairCard(repair, index) {
         addBtn.textContent = '+ Add';
         addBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          showStatus(`Adding "${part}" to database is not yet implemented in this view. Use the parts search modal or voice commands.`, 'info');
+          openAddPartModal(part);
         });
         partWrapper.appendChild(addBtn);
       }
@@ -2033,4 +2068,211 @@ function removePartFromRepair(repairIndex, partNumber) {
   saveRepairsToLocalStorage(); // Persist part removal
   renderRepairs();
   showStatus('Part removed from repair.', 'info');
+}
+
+// ========== ADD PART MODAL FUNCTIONS ==========
+
+function openAddPartModal(partName) {
+  currentPartToAdd = partName;
+  const partNameInput = document.getElementById('partName');
+  if (partNameInput) {
+    partNameInput.value = partName;
+  }
+
+  const addPartModal = document.getElementById('addPartModal');
+  if (addPartModal) {
+    addPartModal.classList.remove('hidden');
+  }
+
+  // Clear other fields
+  document.getElementById('partNumber').value = '';
+  document.getElementById('partCategory').value = '';
+  document.getElementById('partType').value = '';
+  document.getElementById('partPrice').value = '';
+  document.getElementById('partDescription').value = '';
+  document.getElementById('partCommonUses').value = '';
+}
+
+function closeAddPartModal() {
+  const addPartModal = document.getElementById('addPartModal');
+  if (addPartModal) {
+    addPartModal.classList.add('hidden');
+  }
+  currentPartToAdd = '';
+
+  // Stop recording if active
+  if (isModalRecording) {
+    stopModalRecording();
+  }
+}
+
+async function toggleModalRecording() {
+  if (isModalRecording) {
+    stopModalRecording();
+  } else {
+    await startModalRecording();
+  }
+}
+
+async function startModalRecording() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showStatus('Voice recording is not supported in this browser.', 'error');
+      return;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    modalMediaRecorder = new MediaRecorder(stream, {
+      mimeType: 'audio/webm'
+    });
+
+    modalAudioChunks = [];
+
+    modalMediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        modalAudioChunks.push(event.data);
+      }
+    };
+
+    modalMediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(modalAudioChunks, { type: 'audio/webm' });
+      await processModalAudio(audioBlob);
+
+      stream.getTracks().forEach(track => track.stop());
+    };
+
+    modalMediaRecorder.start();
+    isModalRecording = true;
+
+    const modalRecordBtn = document.getElementById('modalRecordBtn');
+    const modalRecordIcon = document.getElementById('modalRecordIcon');
+    const modalRecordText = document.getElementById('modalRecordText');
+
+    if (modalRecordBtn) modalRecordBtn.classList.add('recording');
+    if (modalRecordIcon) modalRecordIcon.textContent = '⏹️';
+    if (modalRecordText) modalRecordText.textContent = 'Stop Recording';
+    showStatus('Recording part details... Click again to stop.', 'info');
+
+  } catch (error) {
+    console.error('Error starting modal recording:', error);
+    showStatus('Could not access microphone. Please check permissions.', 'error');
+  }
+}
+
+function stopModalRecording() {
+  if (modalMediaRecorder && isModalRecording) {
+    modalMediaRecorder.stop();
+    isModalRecording = false;
+
+    const modalRecordBtn = document.getElementById('modalRecordBtn');
+    const modalRecordIcon = document.getElementById('modalRecordIcon');
+    const modalRecordText = document.getElementById('modalRecordText');
+
+    if (modalRecordBtn) modalRecordBtn.classList.remove('recording');
+    if (modalRecordIcon) modalRecordIcon.textContent = '🎤';
+    if (modalRecordText) modalRecordText.textContent = 'Record Part Details';
+    showStatus('Processing audio...', 'info');
+  }
+}
+
+async function processModalAudio(audioBlob) {
+  try {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    const wavBlob = await audioBufferToWav(audioBuffer);
+    const base64Audio = await blobToBase64(wavBlob);
+
+    // Send to backend to parse part details
+    showStatus('Extracting part details from audio...', 'info');
+
+    const response = await fetch('/api/parts/parse-details', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        audio: base64Audio,
+        partName: currentPartToAdd
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to parse part details');
+    }
+
+    const result = await response.json();
+
+    // Fill form with extracted details
+    if (result.partDetails) {
+      document.getElementById('partName').value = result.partDetails.name || currentPartToAdd;
+      document.getElementById('partNumber').value = result.partDetails.part_number || '';
+      document.getElementById('partCategory').value = result.partDetails.category || '';
+      document.getElementById('partType').value = result.partDetails.type || '';
+      document.getElementById('partPrice').value = result.partDetails.price || '';
+      document.getElementById('partDescription').value = result.partDetails.description || '';
+      document.getElementById('partCommonUses').value = result.partDetails.common_uses || '';
+
+      showStatus('Part details extracted! Review and edit as needed.', 'success');
+    }
+
+  } catch (error) {
+    console.error('Error processing modal audio:', error);
+    showStatus('Error processing audio. Please fill in the fields manually.', 'error');
+  }
+}
+
+async function handleAddPart(e) {
+  e.preventDefault();
+
+  const partData = {
+    name: document.getElementById('partName').value.trim(),
+    part_number: document.getElementById('partNumber').value.trim(),
+    category: document.getElementById('partCategory').value,
+    type: document.getElementById('partType').value,
+    price: parseFloat(document.getElementById('partPrice').value) || 0,
+    description: document.getElementById('partDescription').value.trim(),
+    common_uses: document.getElementById('partCommonUses').value.trim()
+  };
+
+  if (!partData.name || !partData.category || !partData.type) {
+    showStatus('Please fill in all required fields (Name, Category, Type).', 'error');
+    return;
+  }
+
+  try {
+    showStatus('Adding part to database...', 'info');
+
+    const response = await fetch('/api/parts', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(partData)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to add part');
+    }
+
+    const result = await response.json();
+
+    showStatus(`Successfully added "${partData.name}" to parts database!`, 'success');
+
+    // Update parts status cache
+    partsStatus[currentPartToAdd] = true;
+
+    // Close modal
+    closeAddPartModal();
+
+    // Re-render repairs to update UI
+    await renderRepairs();
+
+  } catch (error) {
+    console.error('Error adding part:', error);
+    showStatus(`Error: ${error.message}`, 'error');
+  }
 }
