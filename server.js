@@ -17,24 +17,229 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+// Simple transcription endpoint for conversational prompts
+app.post('/api/transcribe', async (req, res) => {
+  try {
+    const { audio } = req.body;
+
+    if (!audio) {
+      return res.status(400).json({ error: 'No audio provided' });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
+
+    const audioBuffer = Buffer.from(audio.split(',')[1] || audio, 'base64');
+    const file = new File([audioBuffer], 'audio.wav', { type: 'audio/wav' });
+
+    const transcription = await openai.audio.transcriptions.create({
+      file: file,
+      model: 'whisper-1',
+      prompt: 'HVAC technician providing information. Common terms: R-410A, R-22, refrigerant, parts, prices, Honeywell, Carrier, Trane, damper, actuator, contactor, capacitor, compressor.'
+    });
+
+    const text = transcription.text || '';
+    console.log('📝 Transcribed (conversational):', text);
+
+    res.json({ text });
+
+  } catch (error) {
+    console.error('Error transcribing audio:', error);
+    res.status(500).json({ error: 'Transcription failed: ' + error.message });
+  }
+});
+
 app.post('/api/parse', async (req, res) => {
   try {
     const { audio, text } = req.body;
+    let rawTranscription = text || '';
     let transcription = text || '';
+    let suggestions = [];
+    let newTerms = [];
 
     if (audio && !text) {
-      transcription = await transcribeAudio(audio);
+      const result = await transcribeAudio(audio);
+      rawTranscription = result.rawText; // Save original transcription
+      transcription = result.text; // Normalized version
+      suggestions = result.suggestions || [];
+      newTerms = result.newTerms || [];
+    } else if (text) {
+      // Also normalize typed text
+      rawTranscription = text; // Keep original typed text
+      const { normalized, suggestions: textSuggestions, newTerms: textNewTerms } = await normalizeHVACTerms(text);
+      transcription = normalized;
+      suggestions = textSuggestions || [];
+      newTerms = textNewTerms || [];
     }
 
     if (!transcription) {
       return res.status(400).json({ error: 'No input provided' });
     }
 
-    const parsedRepairs = await parseRepairs(transcription);
+    // STEP 1: Check if this is a voice command (add part/term)
+    const voiceCommand = await detectVoiceCommand(rawTranscription);
+
+    if (voiceCommand && voiceCommand.command_type === 'add_part') {
+      // Handle "add new part" command
+      const partDetails = await parsePartFromVoice(rawTranscription);
+
+      if (!partDetails.success) {
+        // Return partial data and prompt for missing fields
+        return res.json({
+          command_type: 'add_part',
+          success: false,
+          needs_more_info: true,
+          partial_data: partDetails,
+          missing_fields: partDetails.missing_fields || ['name', 'price'],
+          message: `Starting to add a new part. I'll ask you for the details.`,
+          raw_transcription: rawTranscription
+        });
+      }
+
+      // Auto-generate part number from name
+      const partNumber = partDetails.name
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '-')
+        .substring(0, 20);
+
+      // Add part to database
+      try {
+        // Generate embedding
+        const embeddingText = [partDetails.name, partDetails.description || '', partDetails.category].join(' ');
+        const embeddingResponse = await openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: embeddingText,
+        });
+        const embedding = embeddingResponse.data[0].embedding;
+        const embeddingStr = JSON.stringify(embedding);
+
+        // Insert into database
+        const result = await sql`
+          INSERT INTO parts (
+            part_number, name, description, category, type, price,
+            thumbnail_url, common_uses, embedding,
+            brand, vendor, vendor_part_number, manufacturer_part_number
+          ) VALUES (
+            ${partNumber}, ${partDetails.name}, ${partDetails.description || rawTranscription},
+            ${partDetails.category || 'Other'}, ${partDetails.type || 'inventory'},
+            ${parseFloat(partDetails.price)},
+            ${'https://via.placeholder.com/150?text=' + encodeURIComponent(partDetails.name.substring(0, 10))},
+            ${[]}, ${embeddingStr}::vector(1536),
+            ${partDetails.brand || null}, ${partDetails.vendor || null},
+            ${partDetails.vendor_part_number || null}, ${partDetails.manufacturer_part_number || null}
+          )
+          RETURNING id, part_number, name, category, type, price, brand, vendor, vendor_part_number, manufacturer_part_number
+        `;
+
+        console.log(`✅ Added new part via voice: ${partDetails.name}`);
+
+        return res.json({
+          command_type: 'add_part',
+          success: true,
+          message: `Added "${partDetails.name}" to parts catalog at $${parseFloat(partDetails.price).toFixed(2)}`,
+          part: result[0],
+          raw_transcription: rawTranscription
+        });
+
+      } catch (dbError) {
+        console.error('Database error adding part:', dbError);
+        return res.json({
+          command_type: 'add_part',
+          success: false,
+          message: `Failed to add part: ${dbError.message}`,
+          raw_transcription: rawTranscription
+        });
+      }
+    }
+
+    if (voiceCommand && voiceCommand.command_type === 'add_term') {
+      // Handle "add new term" command
+      const termDetails = await parseTermFromVoice(rawTranscription);
+
+      if (!termDetails.success) {
+        // Return partial data and prompt for missing fields
+        return res.json({
+          command_type: 'add_term',
+          success: false,
+          needs_more_info: true,
+          partial_data: termDetails,
+          missing_fields: termDetails.missing_fields || ['standard_term', 'category'],
+          message: `Starting to add a new term. I'll ask you for the details.`,
+          raw_transcription: rawTranscription
+        });
+      }
+
+      // Add term to database
+      try {
+        // Generate embedding for semantic search
+        const embeddingText = [termDetails.standard_term, termDetails.description || '', ...termDetails.variations].join(' ');
+        const embeddingResponse = await openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: embeddingText,
+        });
+        const embedding = embeddingResponse.data[0].embedding;
+        const embeddingStr = JSON.stringify(embedding);
+
+        // Insert into database
+        const result = await sql`
+          INSERT INTO terminology (
+            standard_term, category, variations, description, embedding
+          ) VALUES (
+            ${termDetails.standard_term}, ${termDetails.category || 'other'},
+            ${termDetails.variations}, ${termDetails.description || ''},
+            ${embeddingStr}::vector(1536)
+          )
+          RETURNING id, standard_term, category, variations
+        `;
+
+        console.log(`✅ Added new term via voice: ${termDetails.standard_term}`);
+
+        return res.json({
+          command_type: 'add_term',
+          success: true,
+          message: `Added "${termDetails.standard_term}" to terminology (${termDetails.variations.length} variations)`,
+          term: result[0],
+          raw_transcription: rawTranscription
+        });
+
+      } catch (dbError) {
+        console.error('Database error adding term:', dbError);
+        return res.json({
+          command_type: 'add_term',
+          success: false,
+          message: `Failed to add term: ${dbError.message}`,
+          raw_transcription: rawTranscription
+        });
+      }
+    }
+
+    // STEP 2: Normal repair documentation flow (if not a command)
+    // Pass both raw and normalized text to GPT-4 for better context
+    const parsedRepairs = await parseRepairs(transcription, rawTranscription);
+
+    // Auto-match parts from catalog for each repair
+    const { repairs: repairsWithParts, unmatchedParts } = await autoMatchParts(parsedRepairs);
+
+    // Use Agent 3 to filter garbage from real parts (more lenient than Agent 2)
+    let newParts = [];
+    if (unmatchedParts.length > 0) {
+      const evaluations = await filterPartSuggestions(unmatchedParts);
+      newParts = unmatchedParts
+        .filter((part, idx) => {
+          const evaluation = evaluations[idx];
+          return evaluation && evaluation.is_valid_part;
+        })
+        .slice(0, 3); // Limit to top 3 to avoid overwhelming user
+    }
 
     res.json({
-      transcription,
-      repairs: parsedRepairs
+      raw_transcription: rawTranscription, // Original text before normalization
+      transcription, // Normalized text with standard terminology
+      repairs: repairsWithParts,
+      suggestions, // Send terminology suggestions to frontend for confirmation
+      newTerms, // Send potential new terms to add to glossary
+      newParts // Send potential new parts to add to catalog
     });
 
   } catch (error) {
@@ -42,6 +247,837 @@ app.post('/api/parse', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Handle conversational command - fill in missing information step by step
+app.post('/api/continue-command', async (req, res) => {
+  try {
+    const { commandType, currentData, fieldToFill, userResponse } = req.body;
+
+    console.log(`\n🗣️ Continuing ${commandType} command, filling: ${fieldToFill}`);
+    console.log(`   User said: "${userResponse}"`);
+
+    // Use AI to extract the specific field value from the user's response
+    const systemPrompt = `Extract the ${fieldToFill} value from the user's response. Return ONLY the extracted value, cleaned up.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userResponse }
+      ],
+      temperature: 0.0
+    });
+
+    const extractedValue = completion.choices[0].message.content.trim();
+    console.log(`   Extracted ${fieldToFill}: "${extractedValue}"`);
+
+    // Update the data with the new field
+    const updatedData = { ...currentData, [fieldToFill]: extractedValue };
+
+    // Determine what's still missing
+    let missingFields = [];
+    if (commandType === 'add_part') {
+      if (!updatedData.name) missingFields.push('name');
+      if (!updatedData.price) missingFields.push('price');
+      // Category and type are optional, will have defaults
+    } else if (commandType === 'add_term') {
+      if (!updatedData.standard_term) missingFields.push('standard_term');
+      if (!updatedData.category) missingFields.push('category');
+      // Variations are optional
+    }
+
+    // If still missing fields, prompt for the next one
+    if (missingFields.length > 0) {
+      return res.json({
+        command_type: commandType,
+        success: false,
+        needs_more_info: true,
+        partial_data: updatedData,
+        missing_fields: missingFields,
+        message: `Got it! Now collecting more information...`
+      });
+    }
+
+    // All required fields collected! Now complete the command
+    if (commandType === 'add_part') {
+      // Add the part
+      const partNumber = (updatedData.name || 'PART')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '-')
+        .substring(0, 20);
+
+      const category = updatedData.category || 'Other';
+      const type = updatedData.type || 'inventory';
+      const price = parseFloat(String(updatedData.price).replace(/[^0-9.]/g, '')) || 0;
+
+      // Generate embedding
+      const embeddingText = [updatedData.name, category].join(' ');
+      const embeddingResponse = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: embeddingText,
+      });
+      const embedding = embeddingResponse.data[0].embedding;
+      const embeddingStr = JSON.stringify(embedding);
+
+      // Insert into database
+      const result = await sql`
+        INSERT INTO parts (
+          part_number, name, description, category, type, price,
+          thumbnail_url, common_uses, embedding,
+          brand, vendor, vendor_part_number, manufacturer_part_number
+        ) VALUES (
+          ${partNumber}, ${updatedData.name}, ${'Added via voice command'},
+          ${category}, ${type}, ${price},
+          ${'https://via.placeholder.com/150?text=' + encodeURIComponent(updatedData.name.substring(0, 10))},
+          ${[]}, ${embeddingStr}::vector(1536),
+          ${updatedData.brand || null}, ${updatedData.vendor || null},
+          ${updatedData.vendor_part_number || null}, ${updatedData.manufacturer_part_number || null}
+        )
+        RETURNING id, part_number, name, category, type, price, brand, vendor, vendor_part_number, manufacturer_part_number
+      `;
+
+      console.log(`✅ Added new part via conversation: ${updatedData.name}`);
+
+      return res.json({
+        command_type: 'add_part',
+        success: true,
+        message: `Added "${updatedData.name}" to parts catalog at $${price.toFixed(2)}`,
+        part: result[0]
+      });
+
+    } else if (commandType === 'add_term') {
+      // Add the term
+      const category = updatedData.category || 'other';
+      const variations = updatedData.variations || [updatedData.standard_term];
+
+      // Generate embedding
+      const embeddingText = [updatedData.standard_term, category, ...variations].join(' ');
+      const embeddingResponse = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: embeddingText,
+      });
+      const embedding = embeddingResponse.data[0].embedding;
+      const embeddingStr = JSON.stringify(embedding);
+
+      // Insert into database
+      const result = await sql`
+        INSERT INTO terminology (
+          standard_term, category, variations, description, embedding
+        ) VALUES (
+          ${updatedData.standard_term}, ${category},
+          ${Array.isArray(variations) ? variations : [variations]}, ${''},
+          ${embeddingStr}::vector(1536)
+        )
+        RETURNING id, standard_term, category, variations
+      `;
+
+      console.log(`✅ Added new term via conversation: ${updatedData.standard_term}`);
+
+      return res.json({
+        command_type: 'add_term',
+        success: true,
+        message: `Added "${updatedData.standard_term}" to terminology`,
+        term: result[0]
+      });
+    }
+
+  } catch (error) {
+    console.error('Error in /api/continue-command:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Agent 1: Terminology Quality Check
+// Uses GPT-4o-mini to intelligently decide if terminology matches need user confirmation
+async function evaluateTerminologyMatches(matches) {
+  if (!matches || matches.length === 0) return [];
+
+  try {
+    console.log('\n🤖 Agent 1: Evaluating terminology matches...');
+
+    const systemPrompt = `You are a terminology quality check agent for an HVAC repair documentation system.
+
+Your job: Decide if terminology matches need user confirmation or can be auto-accepted.
+
+AUTO-ACCEPT (no user confirmation needed) if ANY of these apply:
+1. IDENTICAL TERMS (e.g., "compressor" → "compressor") - even with low similarity score
+2. Only punctuation differences (e.g., "damper actuator." → "damper actuator")
+3. Only capitalization differences (e.g., "RTU" → "rtu")
+4. Only preposition/article removal (e.g., "of R-22" → "R-22", "a compressor" → "compressor")
+5. Obvious abbreviations (e.g., "lb" → "lbs", "R410A" → "R-410A")
+6. Formatting differences (e.g., "24 volt" → "24V", "four ten" → "410")
+7. High confidence (>85%) AND clearly same technical term
+
+REQUIRE CONFIRMATION only if:
+1. Actually different words/concepts (e.g., "contactor" → "capacitor")
+2. Ambiguous transcription (e.g., "R-210" → "RTU-10")
+3. Low confidence (<70%) AND could be wrong term
+4. Multiple possible interpretations
+
+CRITICAL: If the original and suggested are the SAME WORD (ignoring case/punctuation), always auto-accept regardless of similarity score.
+
+Return a JSON object with "decisions" array. Each decision:
+{
+  "needs_confirmation": boolean,
+  "reason": "brief explanation",
+  "auto_accept": boolean
+}
+
+Be very generous with auto-accept. Err on the side of auto-accepting unless genuinely ambiguous.`;
+
+    const matchDescriptions = matches.map((m, idx) =>
+      `Match ${idx + 1}: original="${m.original}" suggested="${m.suggested}" similarity=${(m.confidence * 100).toFixed(0)}% category=${m.category}`
+    ).join('\n');
+
+    const userPrompt = `Evaluate these terminology matches and return decisions:\n\n${matchDescriptions}\n\nReturn format: {"decisions": [{"needs_confirmation": bool, "reason": "...", "auto_accept": bool}, ...]}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Agent 1 raw response:', responseText);
+
+    const result = JSON.parse(responseText);
+    const decisions = result.decisions || [];
+
+    if (decisions.length !== matches.length) {
+      console.error(`  ⚠️  Agent 1 returned ${decisions.length} decisions for ${matches.length} matches`);
+    }
+
+    decisions.forEach((decision, idx) => {
+      const match = matches[idx];
+      if (match) {
+        const status = decision.needs_confirmation ? '❓ Needs confirmation' : '✅ Auto-accept';
+        console.log(`  ${status}: "${match.original}" → "${match.suggested}" - ${decision.reason}`);
+      }
+    });
+
+    return decisions;
+
+  } catch (error) {
+    console.error('❌ Agent 1 evaluation failed:', error.message);
+    console.error('   Stack:', error.stack);
+    // Fallback: if agent fails, use conservative approach (require confirmation for <90%)
+    return matches.map(m => ({
+      needs_confirmation: m.confidence < 0.90,
+      reason: 'Agent evaluation failed, using fallback threshold',
+      auto_accept: m.confidence >= 0.90
+    }));
+  }
+}
+
+// Agent 2: Technical Term Detector
+// Uses GPT-4o-mini to intelligently filter sentence fragments from real technical terms
+async function filterTechnicalTerms(potentialTerms) {
+  if (!potentialTerms || potentialTerms.length === 0) return [];
+
+  try {
+    console.log('\n🤖 Agent 2: Filtering technical terms...');
+
+    const systemPrompt = `You are a technical term detection agent for an HVAC repair documentation system.
+
+Your job: Distinguish real HVAC technical terms from sentence fragments in voice transcriptions.
+
+ACCEPT as technical terms:
+1. HVAC equipment identifiers: "RTU-5", "AHU-2", "FCU-3", "MAU-1"
+2. Part specifications: "24V 3-pole contactor", "5-ton compressor", "3/4 HP motor"
+3. Refrigerant codes: "R-410A", "R-22", "R-134A"
+4. Technical components: "damper actuator", "TXV valve", "reversing valve"
+5. Voltage/electrical specs: "24V transformer", "40VA", "30 amp"
+6. Measurement terms: "subcool", "superheat", "CFM", "micron"
+
+REJECT as sentence fragments if ANY apply:
+1. Starts with conjunction: "and RTU-6", "but the compressor", "or maybe"
+2. Starts with preposition: "of R-22", "with the damper", "at the unit"
+3. Contains common verbs: "need 10 pounds", "think RTU-6", "will also need"
+4. Contains pronouns: "I think", "it needs", "that is"
+5. Incomplete phrase: "also need", "will also", "and then"
+6. Contains multiple sentence elements: "And then RTU-6 needs"
+7. Just quantity words: "10 pounds", "5 lbs", "4 units"
+
+CRITICAL: Real technical terms are NOUNS or NOUN PHRASES describing specific HVAC parts, equipment, or measurements.
+Sentence fragments contain VERBS, CONJUNCTIONS, PREPOSITIONS, or PRONOUNS.
+
+For each term, return:
+{
+  "is_technical_term": boolean,
+  "reason": "brief explanation"
+}
+
+Be strict - when in doubt, reject it. Only accept clean, standalone technical terms.`;
+
+    const termDescriptions = potentialTerms.map((term, idx) =>
+      `Term ${idx + 1}: "${term.phrase}" (closest match: ${term.bestMatch || 'none'} at ${Math.round(term.similarity * 100)}%)`
+    ).join('\n');
+
+    const userPrompt = `Evaluate these potential technical terms:\n\n${termDescriptions}\n\nReturn format: {"evaluations": [{"is_technical_term": bool, "reason": "..."}, ...]}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Agent 2 raw response:', responseText);
+
+    const result = JSON.parse(responseText);
+    const evaluations = result.evaluations || [];
+
+    if (evaluations.length !== potentialTerms.length) {
+      console.error(`  ⚠️  Agent 2 returned ${evaluations.length} evaluations for ${potentialTerms.length} terms`);
+    }
+
+    evaluations.forEach((evaluation, idx) => {
+      const term = potentialTerms[idx];
+      if (term) {
+        const status = evaluation.is_technical_term ? '✅ Technical term' : '❌ Sentence fragment';
+        console.log(`  ${status}: "${term.phrase}" - ${evaluation.reason}`);
+      }
+    });
+
+    return evaluations;
+
+  } catch (error) {
+    console.error('❌ Agent 2 evaluation failed:', error.message);
+    console.error('   Stack:', error.stack);
+    // Fallback: if agent fails, reject all to avoid showing garbage
+    return potentialTerms.map(t => ({
+      is_technical_term: false,
+      reason: 'Agent evaluation failed, rejecting for safety'
+    }));
+  }
+}
+
+// Agent 3: Part Suggestion Filter (More Lenient than Agent 2)
+// Filters unmatched parts to avoid suggesting garbage while accepting unfamiliar brands/models
+async function filterPartSuggestions(unmatchedParts) {
+  if (!unmatchedParts || unmatchedParts.length === 0) return [];
+
+  try {
+    console.log('\n🤖 Agent 3: Filtering part suggestions...');
+
+    const systemPrompt = `You are a part suggestion filter for an HVAC repair documentation system.
+
+Your job: Distinguish real HVAC parts from sentence fragments in voice transcriptions.
+
+ACCEPT as valid parts:
+1. Equipment names with ANY brand/model: "XYZ actuator", "ABC compressor", "Model-123 motor"
+2. Generic part names: "actuator", "contactor", "capacitor", "compressor", "motor"
+3. Part specifications: "24V 3-pole contactor", "5-ton compressor", "3/4 HP motor"
+4. Refrigerant codes: "R-410A", "R-22", "R-134A"
+5. Technical components: "damper actuator", "TXV valve", "reversing valve"
+6. Filters and supplies: "air filter", "filter drier", "refrigerant oil"
+7. Parts with unfamiliar brands: Even if you don't recognize the brand name, if it follows the pattern "[Brand/Model] [Part Type]", accept it
+
+REJECT as sentence fragments if ANY apply:
+1. Starts with conjunction: "and also need", "but the", "or maybe"
+2. Starts with preposition: "of refrigerant", "with the damper", "at the unit"
+3. Contains action verbs: "need 10 pounds", "will replace", "should check"
+4. Contains pronouns: "I think", "it needs", "that is"
+5. Incomplete phrase: "also need", "will also", "and then"
+6. Just quantity words: "10 pounds", "5 lbs", "4 units" (without a part name)
+7. Non-part phrases: "the system", "the unit", "that thing"
+
+KEY DIFFERENCE from terminology filtering: Be MORE ACCEPTING of unfamiliar brands and model numbers.
+- "XYZ actuator" → ACCEPT (actuator is a real part type, even if XYZ is unknown)
+- "Honeywell damper" → ACCEPT (damper is a real part)
+- "Model-500 contactor" → ACCEPT (contactor is a real part)
+- "and also need" → REJECT (sentence fragment)
+
+For each unmatched part, return:
+{
+  "is_valid_part": boolean,
+  "reason": "brief explanation"
+}
+
+When in doubt about a brand name but the part type is clear (actuator, motor, etc.), ACCEPT it.`;
+
+    const partDescriptions = unmatchedParts.map((part, idx) =>
+      `Part ${idx + 1}: "${part.phrase}" (closest match: ${part.bestMatch || 'none'} at ${Math.round(part.similarity * 100)}%)`
+    ).join('\n');
+
+    const userPrompt = `Evaluate these unmatched parts:\n\n${partDescriptions}\n\nReturn format: {"evaluations": [{"is_valid_part": bool, "reason": "..."}, ...]}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Agent 3 raw response:', responseText);
+
+    const result = JSON.parse(responseText);
+    const evaluations = result.evaluations || [];
+
+    if (evaluations.length !== unmatchedParts.length) {
+      console.error(`  ⚠️  Agent 3 returned ${evaluations.length} evaluations for ${unmatchedParts.length} parts`);
+    }
+
+    evaluations.forEach((evaluation, idx) => {
+      const part = unmatchedParts[idx];
+      if (part) {
+        const status = evaluation.is_valid_part ? '✅ Valid part' : '❌ Sentence fragment';
+        console.log(`  ${status}: "${part.phrase}" - ${evaluation.reason}`);
+      }
+    });
+
+    return evaluations;
+
+  } catch (error) {
+    console.error('❌ Agent 3 evaluation failed:', error.message);
+    console.error('   Stack:', error.stack);
+    // Fallback: if agent fails, accept all (better to suggest than to miss)
+    return unmatchedParts.map(p => ({
+      is_valid_part: true,
+      reason: 'Agent evaluation failed, accepting as fallback'
+    }));
+  }
+}
+
+// Agent 4: Voice Command Detector
+// Detects management commands like "add new part" or "add new term"
+async function detectVoiceCommand(text) {
+  if (!text) return null;
+
+  try {
+    console.log('\n🤖 Agent 4: Detecting voice commands...');
+
+    const systemPrompt = `You are a voice command detection agent for an HVAC management system.
+
+Detect if the user is trying to ADD a new part or term to the system, or if they're documenting a repair.
+
+PART ADDITION COMMANDS - Look for phrases like:
+- "Add new part..."
+- "Add a part called..."
+- "Add to parts catalog..."
+- "Create new part..."
+Example: "Add new part, Honeywell damper actuator, $45, electrical, inventory"
+
+TERM ADDITION COMMANDS - Look for phrases like:
+- "Add new term..."
+- "Add to glossary..."
+- "Add terminology..."
+- "Create new term..."
+Example: "Add new term, R-22, refrigerant, variations are R22, R 22, twenty-two"
+
+REPAIR DOCUMENTATION - Everything else
+Example: "RTU-1 needs a new damper actuator and 4 pounds of R-410A"
+
+Return JSON:
+{
+  "command_type": "add_part" | "add_term" | "repair_documentation",
+  "confidence": 0-100,
+  "reason": "brief explanation"
+}
+
+Be strict: only detect "add_part" or "add_term" if there's explicit language about ADDING/CREATING. Otherwise assume it's repair documentation.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Analyze this input: "${text}"` }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Agent 4 raw response:', responseText);
+
+    const result = JSON.parse(responseText);
+
+    if (result.command_type === 'add_part' || result.command_type === 'add_term') {
+      console.log(`  ✅ Detected command: ${result.command_type} (${result.confidence}% confidence)`);
+      console.log(`     Reason: ${result.reason}`);
+      return result;
+    } else {
+      console.log(`  ℹ️  Normal repair documentation detected`);
+      return null;
+    }
+
+  } catch (error) {
+    console.error('❌ Agent 4 command detection failed:', error.message);
+    // Fallback: assume repair documentation
+    return null;
+  }
+}
+
+// Parse Part from Voice Command
+async function parsePartFromVoice(text) {
+  try {
+    console.log('\n🔧 Parsing part details from voice...');
+
+    const systemPrompt = `You are a part information extraction agent.
+
+Extract part details from natural speech. Be VERY flexible and try to extract as much as possible from a single utterance.
+
+Look for:
+- Part name (REQUIRED): The main name/description of the part
+- Price (REQUIRED): Dollar amount - be creative in finding it ("$45", "forty-five dollars", "costs 45", "about $50", "fifty bucks")
+- Category: electrical, refrigerant, controls, filters, supplies, other (if not mentioned, infer from part name or use "Other")
+- Type: "consumable" or "inventory" (default to "inventory" if not mentioned)
+- Brand: The brand or manufacturer (e.g., "Honeywell", "Carrier", "Trane", "Copeland")
+- Vendor: Who you buy it from (e.g., "Johnstone", "Ferguson", "Home Depot")
+- Vendor part number: The vendor's SKU/part number
+- Manufacturer part number: The manufacturer's part number
+
+IMPORTANT:
+- Try HARD to find the price in the text, even if it's approximate
+- If category isn't mentioned, infer it from the part name
+- Extract brand from the part name if present (e.g., "Honeywell damper actuator" → brand: "Honeywell")
+- Only name and price are CRITICAL - everything else is optional
+- If you can extract name and price, mark success=true
+- Only mark success=false if name OR price is truly missing
+
+Examples:
+"Add Honeywell damper actuator, $45, electrical, from Johnstone"
+→ name: "Honeywell Damper Actuator", price: 45.00, category: "Electrical", brand: "Honeywell", vendor: "Johnstone", success: true
+
+"Add Trane compressor contactor, $35, vendor part number TC123"
+→ name: "Trane Compressor Contactor", price: 35.00, category: "Electrical", brand: "Trane", vendor_part_number: "TC123", success: true
+
+"Add Carrier fan motor sixty five dollars from Ferguson part number FM-500, manufacturer number CFM-500"
+→ name: "Carrier Fan Motor", price: 65.00, brand: "Carrier", vendor: "Ferguson", vendor_part_number: "FM-500", manufacturer_part_number: "CFM-500", success: true
+
+Return JSON:
+{
+  "name": "cleaned part name" or null,
+  "price": numeric_value or null,
+  "category": "category_name" (inferred or "Other"),
+  "type": "consumable" or "inventory",
+  "brand": "brand name" or null,
+  "vendor": "vendor name" or null,
+  "vendor_part_number": "vendor SKU" or null,
+  "manufacturer_part_number": "manufacturer part number" or null,
+  "description": "full utterance",
+  "success": true if name AND price found, false otherwise,
+  "missing_fields": ["field1"] if CRITICAL fields missing
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Extract part details: "${text}"` }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Part extraction response:', responseText);
+
+    const result = JSON.parse(responseText);
+
+    // Ensure we have defaults for optional fields
+    if (result.success) {
+      result.category = result.category || 'Other';
+      result.type = result.type || 'inventory';
+    }
+
+    return result;
+
+  } catch (error) {
+    console.error('❌ Part parsing failed:', error.message);
+    return { success: false, error: error.message, missing_fields: ['name', 'price'] };
+  }
+}
+
+// Parse Term from Voice Command
+async function parseTermFromVoice(text) {
+  try {
+    console.log('\n📚 Parsing term details from voice...');
+
+    const systemPrompt = `You are a terminology extraction agent for HVAC terminology.
+
+Extract term details from natural speech. Be VERY flexible and try to extract as much as possible from a single utterance.
+
+Look for:
+- Standard term (REQUIRED): The correct way to write the term
+- Category: refrigerant, equipment, voltage, measurement, part_type, action, brand, other (infer from context if not mentioned)
+- Variations: Different ways it might be said/spelled (if mentioned)
+- Description: Any context provided
+
+IMPORTANT:
+- Try to infer category from the term itself if not explicitly stated
+- If you can extract standard_term and category, mark success=true
+- Variations are optional - if not mentioned, just use the standard term
+- Only mark success=false if standard_term OR category cannot be determined
+
+Examples:
+"Add new term, R-22, refrigerant, variations are R22, R 22, twenty-two"
+→ standard_term: "R-22", category: "refrigerant", variations: ["R-22", "R22", "R 22", "twenty-two"], success: true
+
+"Add to glossary RTU, equipment type, also called roof top unit"
+→ standard_term: "RTU", category: "equipment", variations: ["RTU", "roof top unit", "rooftop unit"], success: true
+
+"Create term damper actuator, it's a part type"
+→ standard_term: "damper actuator", category: "part_type", variations: ["damper actuator"], success: true
+
+"Add R-410A refrigerant"
+→ standard_term: "R-410A", category: "refrigerant", variations: ["R-410A"], success: true
+
+"Add compressor brand Copeland"
+→ standard_term: "Copeland", category: "brand", variations: ["Copeland"], success: true
+
+Return JSON:
+{
+  "standard_term": "the correct term" or null,
+  "category": "category_name" (inferred if possible, or "other"),
+  "variations": ["variation1", "variation2"] (always include standard_term),
+  "description": "any description provided",
+  "success": true if standard_term AND category found, false otherwise,
+  "missing_fields": ["field1"] if CRITICAL fields missing
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Extract term details: "${text}"` }
+      ],
+      temperature: 0.0,
+      response_format: { type: "json_object" }
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('  Term extraction response:', responseText);
+
+    const result = JSON.parse(responseText);
+
+    // Ensure variations array includes the standard term itself
+    if (result.success) {
+      result.category = result.category || 'other';
+
+      if (!result.variations || result.variations.length === 0) {
+        result.variations = [result.standard_term];
+      } else if (!result.variations.includes(result.standard_term)) {
+        result.variations.unshift(result.standard_term);
+      }
+    }
+
+    return result;
+
+  } catch (error) {
+    console.error('❌ Term parsing failed:', error.message);
+    return { success: false, error: error.message, missing_fields: ['standard_term', 'category'] };
+  }
+}
+
+// Normalize HVAC terminology using semantic search against terminology database
+async function normalizeHVACTerms(text) {
+  if (!text) return { normalized: text, suggestions: [], newTerms: [] };
+
+  try {
+    console.log('\n🔍 Normalizing HVAC terminology...');
+
+    // Extract candidate phrases (n-grams from 1-4 words)
+    const words = text.split(/\s+/);
+    const candidates = new Set();
+
+    // Generate n-grams (phrases of 1-4 words)
+    for (let n = 1; n <= 4; n++) {
+      for (let i = 0; i <= words.length - n; i++) {
+        let phrase = words.slice(i, i + n).join(' ');
+
+        // Strip trailing punctuation from the phrase
+        phrase = phrase.replace(/[.,;:!?]+$/, '');
+
+        // Only add phrases that might be technical terms (contain letters or numbers)
+        if (/[a-zA-Z0-9]/.test(phrase) && phrase.length > 1) {
+          candidates.add({
+            phrase: phrase,
+            startIndex: text.toLowerCase().indexOf(phrase.toLowerCase()),
+            length: phrase.length
+          });
+        }
+      }
+    }
+
+    // Convert to array and sort by length (longest first) to handle overlapping matches
+    const sortedCandidates = Array.from(candidates).sort((a, b) => b.length - a.length);
+
+    // Find matches in terminology database
+    const replacements = [];
+    const potentialNewTerms = []; // Track phrases that might be new terminology
+
+    for (const candidate of sortedCandidates) {
+      try {
+        // Skip very common words
+        const commonWords = ['the', 'and', 'for', 'with', 'needs', 'need', 'has', 'is', 'are', 'was', 'were', 'be', 'been', 'being'];
+        if (candidate.phrase.split(' ').length === 1 && commonWords.includes(candidate.phrase.toLowerCase())) {
+          continue;
+        }
+
+        // Generate embedding for the candidate phrase
+        const embeddingResponse = await openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: candidate.phrase,
+        });
+
+        const queryEmbedding = embeddingResponse.data[0].embedding;
+        const embeddingStr = JSON.stringify(queryEmbedding);
+
+        // Search terminology database
+        const results = await sql`
+          SELECT
+            standard_term,
+            category,
+            variations,
+            1 - (embedding <=> ${embeddingStr}::vector(1536)) AS similarity
+          FROM hvac_terminology
+          ORDER BY embedding <=> ${embeddingStr}::vector(1536)
+          LIMIT 1
+        `;
+
+        const bestMatch = results.length > 0 ? results[0] : null;
+        const similarity = bestMatch ? bestMatch.similarity : 0;
+
+        // Collect potential new terms with low similarity for Agent 2 to evaluate
+        // Agent 2 will intelligently filter sentence fragments from real technical terms
+        if (similarity < 0.50 && candidate.phrase.split(' ').length >= 2) {
+          potentialNewTerms.push({
+            phrase: candidate.phrase,
+            bestMatch: bestMatch ? bestMatch.standard_term : null,
+            similarity: similarity
+          });
+          console.log(`  💡 Candidate for glossary: "${candidate.phrase}" (best match: ${similarity > 0 ? (similarity * 100).toFixed(0) + '% - ' + bestMatch.standard_term : 'none'})`);
+        }
+
+        // If we have a strong match (>70% similarity), use it
+        if (similarity > 0.70) {
+          const match = bestMatch;
+
+          // Also check if the phrase is in the variations array (exact match gets priority)
+          const isExactVariation = match.variations.some(v =>
+            v.toLowerCase() === candidate.phrase.toLowerCase()
+          );
+
+          const finalSimilarity = isExactVariation ? 1.0 : similarity;
+
+          if (finalSimilarity > 0.70) {
+            replacements.push({
+              original: candidate.phrase,
+              replacement: match.standard_term,
+              category: match.category,
+              similarity: finalSimilarity,
+              startIndex: candidate.startIndex
+            });
+          }
+        }
+
+      } catch (error) {
+        // Skip this candidate if embedding fails
+        console.error(`  Error processing "${candidate.phrase}":`, error.message);
+      }
+    }
+
+    // Sort replacements by start index (reverse order) to avoid index shifting
+    replacements.sort((a, b) => b.startIndex - a.startIndex);
+
+    // Remove overlapping replacements (keep the longest/best match)
+    const finalReplacements = [];
+    const usedRanges = new Set();
+
+    for (const replacement of replacements.sort((a, b) => b.similarity - a.similarity)) {
+      const endIndex = replacement.startIndex + replacement.original.length;
+      let hasOverlap = false;
+
+      for (let i = replacement.startIndex; i < endIndex; i++) {
+        if (usedRanges.has(i)) {
+          hasOverlap = true;
+          break;
+        }
+      }
+
+      if (!hasOverlap) {
+        finalReplacements.push(replacement);
+        for (let i = replacement.startIndex; i < endIndex; i++) {
+          usedRanges.add(i);
+        }
+      }
+    }
+
+    // Apply replacements and track potential suggestions for Agent 1 evaluation
+    let normalized = text;
+    const potentialSuggestions = []; // Candidates for confirmation
+
+    for (const replacement of finalReplacements.sort((a, b) => b.startIndex - a.startIndex)) {
+      const regex = new RegExp(replacement.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      normalized = normalized.replace(regex, replacement.replacement);
+
+      const confidencePercent = (replacement.similarity * 100).toFixed(0);
+      console.log(`  ✓ "${replacement.original}" → "${replacement.replacement}" (${confidencePercent}% match, ${replacement.category})`);
+
+      // Collect all matches below 95% confidence for Agent 1 to evaluate
+      // Agent 1 will decide which actually need confirmation
+      if (replacement.similarity < 0.95) {
+        potentialSuggestions.push({
+          original: replacement.original,
+          suggested: replacement.replacement,
+          confidence: replacement.similarity,
+          category: replacement.category
+        });
+      }
+    }
+
+    // Use Agent 1 to intelligently filter which matches need confirmation
+    let suggestions = [];
+    if (potentialSuggestions.length > 0) {
+      const decisions = await evaluateTerminologyMatches(potentialSuggestions);
+      suggestions = potentialSuggestions.filter((suggestion, idx) => {
+        const decision = decisions[idx];
+        return decision && decision.needs_confirmation;
+      });
+    }
+
+    if (finalReplacements.length === 0) {
+      console.log('  No terminology matches found');
+    }
+
+    // Remove duplicate new terms and filter overlaps with replacements
+    const usedPhrases = new Set(finalReplacements.map(r => r.original.toLowerCase()));
+    const candidateNewTerms = potentialNewTerms
+      .filter(nt => !usedPhrases.has(nt.phrase.toLowerCase()));
+
+    // Use Agent 2 to filter sentence fragments from real technical terms
+    let newTerms = [];
+    if (candidateNewTerms.length > 0) {
+      const evaluations = await filterTechnicalTerms(candidateNewTerms);
+      newTerms = candidateNewTerms
+        .filter((term, idx) => {
+          const evaluation = evaluations[idx];
+          return evaluation && evaluation.is_technical_term;
+        })
+        .slice(0, 3); // Limit to top 3 to avoid overwhelming user
+    }
+
+    return { normalized, suggestions, newTerms };
+
+  } catch (error) {
+    console.error('❌ Terminology normalization failed:', error.message);
+    // Return original text if normalization fails
+    return { normalized: text, suggestions: [], newTerms: [] };
+  }
+}
 
 async function transcribeAudio(base64Audio) {
   try {
@@ -53,12 +1089,27 @@ async function transcribeAudio(base64Audio) {
 
     const file = new File([audioBuffer], 'audio.wav', { type: 'audio/wav' });
 
+    // Add HVAC-specific context to improve transcription accuracy
     const transcription = await openai.audio.transcriptions.create({
       file: file,
-      model: 'whisper-1'
+      model: 'whisper-1',
+      prompt: 'HVAC technician documenting repairs. Common terms: R-410A, R-22, R-134A refrigerant, RTU, AHU, FCU, contactor, capacitor, compressor, condenser, evaporator, damper actuator, thermistor, TXV valve, leak check, subcool, superheat, micron, vacuum, CFM.'
     });
 
-    return transcription.text || '';
+    const rawText = transcription.text || '';
+    const { normalized, suggestions, newTerms } = await normalizeHVACTerms(rawText);
+
+    console.log('Raw transcription:', rawText);
+    if (rawText !== normalized) {
+      console.log('Normalized transcription:', normalized);
+    }
+
+    return {
+      rawText, // Original Whisper transcription
+      text: normalized, // Normalized with standard terminology
+      suggestions,
+      newTerms
+    };
 
   } catch (error) {
     console.error('Transcription error:', error);
@@ -66,14 +1117,20 @@ async function transcribeAudio(base64Audio) {
   }
 }
 
-async function parseRepairs(transcription) {
+async function parseRepairs(transcription, rawTranscription = null) {
   try {
     const systemPrompt = `You are an HVAC repair documentation assistant. Parse the technician's notes into structured repair items.
+
+IMPORTANT: Use proper HVAC terminology:
+- Refrigerants: R-410A (not R410, R4-10, or 410A), R-22, R-134A, R-404A, R-407C, R-32
+- Equipment: RTU-1, AHU-2, FCU-3, MAU-1 (with dashes)
+- Voltages: 24V, 120V, 240V, 208V, 480V
+- Units: lbs (for pounds), CFM, tons, BTU
 
 Return a JSON array where each item has:
 - equipment: string (e.g., "RTU-1", "AHU-2")
 - problem: string (brief description)
-- parts: array of strings (parts needed)
+- parts: array of strings (parts needed, with proper formatting)
 - actions: array of strings (actions to take)
 - notes: string (additional context)
 
@@ -84,14 +1141,14 @@ Example output:
   {
     "equipment": "RTU-1",
     "problem": "Low refrigerant",
-    "parts": ["4 lbs R410A"],
+    "parts": ["4 lbs R-410A"],
     "actions": ["Leak check", "Recharge"],
     "notes": ""
   },
   {
     "equipment": "RTU-1",
     "problem": "Broken economizer damper actuator",
-    "parts": ["Economizer actuator"],
+    "parts": ["Economizer damper actuator"],
     "actions": ["Replace actuator"],
     "notes": ""
   },
@@ -106,11 +1163,17 @@ Example output:
 
 Return ONLY valid JSON array, no additional text.`;
 
+    // Build user message with both raw and normalized text for better context
+    let userMessage = transcription;
+    if (rawTranscription && rawTranscription !== transcription) {
+      userMessage = `Original voice transcription: "${rawTranscription}"\n\nNormalized with standard terminology: "${transcription}"\n\nPlease parse the normalized version, but reference the original if needed for context.`;
+    }
+
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: transcription }
+        { role: 'user', content: userMessage }
       ],
       temperature: 0.3
     });
@@ -129,6 +1192,194 @@ Return ONLY valid JSON array, no additional text.`;
     console.error('Parsing error:', error);
     throw new Error(`Failed to parse repairs: ${error.message}`);
   }
+}
+
+// Auto-match parts from catalog using semantic search
+async function autoMatchParts(repairs) {
+  if (!repairs || repairs.length === 0) return { repairs, unmatchedParts: [] };
+
+  console.log('\n🔍 Auto-matching parts from catalog...');
+
+  const unmatchedParts = []; // Collect parts that don't match
+
+  for (const repair of repairs) {
+    if (!repair.parts || repair.parts.length === 0) continue;
+
+    repair.selectedParts = [];
+
+    for (const partString of repair.parts) {
+      try {
+        // Extract quantity from part string (e.g., "4 lbs R410A" → qty: 4, search: "R410A refrigerant")
+        const { quantity, searchTerm, refrigerantCode } = extractQuantityAndTerm(partString);
+
+        let matchedPart = null;
+        let bestMatch = null; // Track best match for unmatched parts
+
+        // CRITICAL SAFETY CHECK: For refrigerants, require EXACT code match
+        // Never allow cross-refrigerant matching (R-22 ≠ R-410A)
+        if (refrigerantCode) {
+          console.log(`  🔒 Refrigerant detected: ${refrigerantCode} - using exact match only`);
+
+          // Try exact match first (handles R-410A, R410A, R-22, etc.)
+          const exactMatch = await sql`
+            SELECT
+              id,
+              part_number,
+              name,
+              description,
+              category,
+              type,
+              price,
+              1.0 AS similarity
+            FROM parts
+            WHERE (
+              name ILIKE ${`%${refrigerantCode}%`} OR
+              part_number ILIKE ${`%${refrigerantCode}%`} OR
+              description ILIKE ${`%${refrigerantCode}%`}
+            )
+            AND (
+              name ILIKE '%refrigerant%' OR
+              category = 'refrigerant'
+            )
+            LIMIT 1
+          `;
+
+          if (exactMatch.length > 0) {
+            matchedPart = exactMatch[0];
+            console.log(`  ✓ "${partString}" → ${matchedPart.name} (qty: ${quantity}, EXACT refrigerant match)`);
+          } else {
+            console.log(`  ✗ "${partString}" → No exact refrigerant match for ${refrigerantCode}`);
+            // Collect as unmatched part
+            unmatchedParts.push({
+              phrase: partString,
+              searchTerm: searchTerm,
+              bestMatch: null,
+              similarity: 0,
+              quantity: quantity
+            });
+          }
+
+        } else {
+          // Non-refrigerant parts: use semantic search
+          const embeddingResponse = await openai.embeddings.create({
+            model: 'text-embedding-3-small',
+            input: searchTerm,
+          });
+
+          const queryEmbedding = embeddingResponse.data[0].embedding;
+          const embeddingStr = JSON.stringify(queryEmbedding);
+
+          // Find best matching part
+          const results = await sql`
+            SELECT
+              id,
+              part_number,
+              name,
+              description,
+              category,
+              type,
+              price,
+              1 - (embedding <=> ${embeddingStr}::vector(1536)) AS similarity
+            FROM parts
+            ORDER BY embedding <=> ${embeddingStr}::vector(1536)
+            LIMIT 1
+          `;
+
+          if (results.length > 0 && results[0].similarity > 0.6) {
+            matchedPart = results[0];
+            bestMatch = results[0];
+            console.log(`  ✓ "${partString}" → ${matchedPart.name} (qty: ${quantity}, ${(matchedPart.similarity * 100).toFixed(0)}% match)`);
+          } else {
+            bestMatch = results[0];
+            console.log(`  ✗ "${partString}" → No match found (best: ${results[0] ? (results[0].similarity * 100).toFixed(0) : 0}%)`);
+            // Collect as unmatched part
+            unmatchedParts.push({
+              phrase: partString,
+              searchTerm: searchTerm,
+              bestMatch: bestMatch ? bestMatch.name : null,
+              similarity: bestMatch ? parseFloat(bestMatch.similarity) : 0,
+              quantity: quantity
+            });
+          }
+        }
+
+        // Add matched part to repair
+        if (matchedPart) {
+          repair.selectedParts.push({
+            part_number: matchedPart.part_number,
+            name: matchedPart.name,
+            price: matchedPart.price,
+            type: matchedPart.type,
+            quantity: quantity,
+            auto_matched: true,
+            original_text: partString,
+            match_confidence: parseFloat(matchedPart.similarity)
+          });
+        }
+
+      } catch (error) {
+        console.error(`  Error matching part "${partString}":`, error.message);
+      }
+    }
+  }
+
+  console.log('✓ Auto-matching complete\n');
+  console.log(`  Found ${unmatchedParts.length} unmatched part(s)`);
+  return { repairs, unmatchedParts };
+}
+
+// Extract quantity and clean search term from part string
+function extractQuantityAndTerm(partString) {
+  let quantity = 1;
+  let searchTerm = partString.toLowerCase();
+  let refrigerantCode = null;
+
+  // Match patterns like "4 lbs", "5 pounds", "2x", "3 units", etc.
+  const quantityPatterns = [
+    /(\d+)\s*(?:lbs?|pounds?)/i,  // "4 lbs", "5 pounds"
+    /(\d+)\s*(?:x|×)/i,            // "2x", "3×"
+    /(\d+)\s+/,                     // "4 " (number followed by space)
+  ];
+
+  for (const pattern of quantityPatterns) {
+    const match = partString.match(pattern);
+    if (match) {
+      quantity = parseInt(match[1]);
+      // Remove the quantity from search term
+      searchTerm = partString.replace(pattern, '').trim();
+      break;
+    }
+  }
+
+  // Clean up search term for better matching
+  searchTerm = searchTerm
+    .replace(/\blbs?\b/gi, '') // Remove "lb", "lbs"
+    .replace(/\bpounds?\b/gi, '')
+    .replace(/\bunits?\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // CRITICAL: Detect refrigerant codes for exact matching
+  // Matches: R-410A, R410A, R-22, R22, R-134A, etc.
+  const refrigerantMatch = searchTerm.match(/R-?\d{2,3}[A-Z]?/i);
+  if (refrigerantMatch) {
+    refrigerantCode = refrigerantMatch[0].toUpperCase();
+    // Normalize format: ensure hyphen (R410A → R-410A, R22 → R-22)
+    if (!refrigerantCode.includes('-')) {
+      refrigerantCode = refrigerantCode.replace(/^R(\d)/, 'R-$1');
+    }
+    console.log(`  🔒 Refrigerant code detected: ${refrigerantCode}`);
+  }
+
+  // Enhance search term for non-refrigerant parts
+  if (!refrigerantCode) {
+    // If it looks like a voltage spec (24V, 120V, etc.), add context
+    if (/\d+V\b/i.test(searchTerm) && !/contactor|transformer|relay/i.test(searchTerm)) {
+      // Already has voltage, no need to enhance
+    }
+  }
+
+  return { quantity, searchTerm, refrigerantCode };
 }
 
 // In-memory storage for submitted repairs
@@ -194,9 +1445,10 @@ app.get('/api/parts/search', async (req, res) => {
     });
 
     const queryEmbedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(queryEmbedding);
 
-    // Build the search query with optional filters
-    let searchQuery = sql`
+    // Execute search query - no threshold, just order by similarity
+    const results = await sql`
       SELECT
         id,
         part_number,
@@ -207,38 +1459,25 @@ app.get('/api/parts/search', async (req, res) => {
         price,
         thumbnail_url,
         common_uses,
-        1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)) AS similarity
+        1 - (embedding <=> ${embeddingStr}::vector(1536)) AS similarity
       FROM parts
-      WHERE 1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)) > 0.5
-    `;
-
-    // Add type filter if provided
-    if (type) {
-      searchQuery = sql`
-        ${searchQuery}
-        AND type = ${type}
-      `;
-    }
-
-    // Add category filter if provided
-    if (category) {
-      searchQuery = sql`
-        ${searchQuery}
-        AND category = ${category}
-      `;
-    }
-
-    // Complete the query with order and limit
-    const results = await sql`
-      ${searchQuery}
-      ORDER BY embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)
+      ORDER BY embedding <=> ${embeddingStr}::vector(1536)
       LIMIT ${parseInt(limit)}
     `;
 
+    // Filter by type and category in JavaScript if needed
+    let filteredResults = results;
+    if (type) {
+      filteredResults = filteredResults.filter(part => part.type === type);
+    }
+    if (category) {
+      filteredResults = filteredResults.filter(part => part.category === category);
+    }
+
     res.json({
       query,
-      count: results.length,
-      parts: results
+      count: filteredResults.length,
+      parts: filteredResults
     });
 
   } catch (error) {
@@ -315,6 +1554,23 @@ app.get('/api/parts/categories', async (req, res) => {
   }
 });
 
+// Get all parts (for parts manager)
+app.get('/api/parts/all', async (req, res) => {
+  try {
+    const parts = await sql`
+      SELECT id, part_number, name, description, category, type, price, thumbnail_url, common_uses, created_at
+      FROM parts
+      ORDER BY category, name
+    `;
+
+    res.json(parts);
+
+  } catch (error) {
+    console.error('Error fetching all parts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Check if parts exist in database
 app.post('/api/parts/check', async (req, res) => {
   try {
@@ -334,6 +1590,7 @@ app.post('/api/parts/check', async (req, res) => {
       });
 
       const queryEmbedding = embeddingResponse.data[0].embedding;
+      const embeddingStr = JSON.stringify(queryEmbedding);
 
       const matches = await sql`
         SELECT
@@ -341,10 +1598,10 @@ app.post('/api/parts/check', async (req, res) => {
           part_number,
           name,
           description,
-          1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)) AS similarity
+          1 - (embedding <=> ${embeddingStr}::vector(1536)) AS similarity
         FROM parts
-        WHERE 1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)) > 0.7
-        ORDER BY embedding <=> ${JSON.stringify(queryEmbedding)}::vector(1536)
+        WHERE 1 - (embedding <=> ${embeddingStr}::vector(1536)) > 0.7
+        ORDER BY embedding <=> ${embeddingStr}::vector(1536)
         LIMIT 1
       `;
 
@@ -363,111 +1620,60 @@ app.post('/api/parts/check', async (req, res) => {
   }
 });
 
-// Parse part details from voice input
-app.post('/api/parts/parse-details', async (req, res) => {
+// Add new part
+app.post('/api/parts', async (req, res) => {
   try {
-    const { audio, text, partName } = req.body;
-    let transcription = text || '';
+    const { part_number, name, description, category, type, price, thumbnail_url, common_uses, brand, vendor, vendor_part_number, manufacturer_part_number } = req.body;
 
-    if (audio && !text) {
-      transcription = await transcribeAudio(audio);
-    }
-
-    if (!transcription) {
-      return res.status(400).json({ error: 'No input provided' });
-    }
-
-    // Use AI to extract structured part details
-    const systemPrompt = `You are an HVAC parts database assistant. Parse the spoken part details into structured data.
-
-Return a JSON object with:
-- name: string (part name)
-- part_number: string (manufacturer part number if mentioned, otherwise empty)
-- description: string (detailed description)
-- category: string (one of: "Electrical", "Mechanical", "Refrigeration", "Controls", "Filters", "Other")
-- type: string (either "consumable" or "inventory")
-- price: number (price if mentioned, otherwise 0)
-- common_uses: string (common applications or uses)
-
-If a field is not mentioned, make a reasonable inference based on the part name and context.
-
-Example input: "This is a Honeywell economizer actuator, part number M847D. It's used for damper control in RTUs. Costs about 150 dollars. This is an inventory item for mechanical systems."
-
-Example output:
-{
-  "name": "Honeywell Economizer Actuator",
-  "part_number": "M847D",
-  "description": "Honeywell economizer actuator for damper control",
-  "category": "Mechanical",
-  "type": "inventory",
-  "price": 150,
-  "common_uses": "Damper control in RTUs, economizer systems"
-}
-
-Return ONLY valid JSON object, no additional text.`;
-
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Part being described: ${partName}\n\nUser's description: ${transcription}` }
-      ],
-      temperature: 0.3
-    });
-
-    const content = completion.choices[0].message.content.trim();
-
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('No valid JSON object found in response');
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-
-    res.json({
-      transcription,
-      partDetails: parsed
-    });
-
-  } catch (error) {
-    console.error('Error parsing part details:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Add new part to database
-app.post('/api/parts/add', async (req, res) => {
-  try {
-    const { name, part_number, description, category, type, price, common_uses } = req.body;
-
-    if (!name || !category || !type) {
-      return res.status(400).json({ error: 'Name, category, and type are required' });
+    if (!part_number || !name || !category || !type || price === undefined) {
+      return res.status(400).json({ error: 'part_number, name, category, type, and price are required' });
     }
 
     // Generate embedding for the part
-    const embeddingText = `${name} ${part_number || ''} ${description || ''} ${common_uses || ''}`;
+    const embeddingText = [name, description || '', category].join(' ');
     const embeddingResponse = await openai.embeddings.create({
       model: 'text-embedding-3-small',
       input: embeddingText,
     });
 
     const embedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(embedding);
 
     // Insert into database
     const result = await sql`
-      INSERT INTO parts (part_number, name, description, category, type, price, common_uses, embedding)
-      VALUES (
-        ${part_number || ''},
+      INSERT INTO parts (
+        part_number,
+        name,
+        description,
+        category,
+        type,
+        price,
+        thumbnail_url,
+        common_uses,
+        embedding,
+        brand,
+        vendor,
+        vendor_part_number,
+        manufacturer_part_number
+      ) VALUES (
+        ${part_number},
         ${name},
         ${description || ''},
         ${category},
         ${type},
-        ${price || 0},
-        ${common_uses || ''},
-        ${JSON.stringify(embedding)}::vector(1536)
+        ${parseFloat(price)},
+        ${thumbnail_url || ''},
+        ${common_uses || []},
+        ${embeddingStr}::vector(1536),
+        ${brand || null},
+        ${vendor || null},
+        ${vendor_part_number || null},
+        ${manufacturer_part_number || null}
       )
-      RETURNING *
+      RETURNING id, part_number, name, category, type, price, brand, vendor, vendor_part_number, manufacturer_part_number
     `;
+
+    console.log(`✓ Added new part: ${name} (${part_number})`);
 
     res.json({
       success: true,
@@ -476,6 +1682,399 @@ app.post('/api/parts/add', async (req, res) => {
 
   } catch (error) {
     console.error('Error adding part:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update existing part
+app.put('/api/parts/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { part_number, name, description, category, type, price, thumbnail_url, common_uses, brand, vendor, vendor_part_number, manufacturer_part_number } = req.body;
+
+    if (!part_number || !name || !category || !type || price === undefined) {
+      return res.status(400).json({ error: 'part_number, name, category, type, and price are required' });
+    }
+
+    // Regenerate embedding for the updated part
+    const embeddingText = [name, description || '', category].join(' ');
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: embeddingText,
+    });
+
+    const embedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(embedding);
+
+    // Update in database
+    const result = await sql`
+      UPDATE parts
+      SET
+        part_number = ${part_number},
+        name = ${name},
+        description = ${description || ''},
+        category = ${category},
+        type = ${type},
+        price = ${parseFloat(price)},
+        thumbnail_url = ${thumbnail_url || ''},
+        common_uses = ${common_uses || []},
+        embedding = ${embeddingStr}::vector(1536),
+        brand = ${brand || null},
+        vendor = ${vendor || null},
+        vendor_part_number = ${vendor_part_number || null},
+        manufacturer_part_number = ${manufacturer_part_number || null},
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING id, part_number, name, category, type, price, brand, vendor, vendor_part_number, manufacturer_part_number
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Part not found' });
+    }
+
+    console.log(`✓ Updated part: ${name} (${part_number})`);
+
+    res.json({
+      success: true,
+      part: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error updating part:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete part
+app.delete('/api/parts/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await sql`
+      DELETE FROM parts
+      WHERE id = ${id}
+      RETURNING part_number, name
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Part not found' });
+    }
+
+    console.log(`✓ Deleted part: ${result[0].name} (${result[0].part_number})`);
+
+    res.json({
+      success: true,
+      deleted: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error deleting part:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Terminology Management Endpoints
+
+// Confirm and save a terminology variation
+app.post('/api/terminology/confirm', async (req, res) => {
+  try {
+    const { original, corrected, category } = req.body;
+
+    if (!original || !corrected) {
+      return res.status(400).json({ error: 'original and corrected are required' });
+    }
+
+    console.log(`\n📝 Confirming terminology: "${original}" → "${corrected}"`);
+
+    // Check if the corrected term already exists in the database
+    const existing = await sql`
+      SELECT id, standard_term, variations, description, category
+      FROM hvac_terminology
+      WHERE standard_term ILIKE ${corrected}
+      LIMIT 1
+    `;
+
+    if (existing.length > 0) {
+      // Add the original as a variation to the existing term
+      const term = existing[0];
+
+      // Check if variation already exists
+      if (term.variations.some(v => v.toLowerCase() === original.toLowerCase())) {
+        console.log(`  ✓ Variation "${original}" already exists for "${term.standard_term}"`);
+        return res.json({
+          success: true,
+          message: 'Variation already exists',
+          term
+        });
+      }
+
+      // Add new variation
+      const updatedVariations = [...term.variations, original];
+
+      // Regenerate embedding with new variation
+      const embeddingText = [
+        term.standard_term,
+        ...updatedVariations,
+        term.description || ''
+      ].join(' ');
+
+      const embeddingResponse = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: embeddingText,
+      });
+
+      const embedding = embeddingResponse.data[0].embedding;
+      const embeddingStr = JSON.stringify(embedding);
+
+      // Update the term
+      const result = await sql`
+        UPDATE hvac_terminology
+        SET
+          variations = ${updatedVariations},
+          embedding = ${embeddingStr}::vector(1536),
+          updated_at = NOW()
+        WHERE id = ${term.id}
+        RETURNING id, standard_term, variations, category
+      `;
+
+      console.log(`  ✓ Added "${original}" as variation of "${term.standard_term}"`);
+
+      res.json({
+        success: true,
+        message: 'Variation added successfully',
+        term: result[0]
+      });
+
+    } else {
+      // Create new terminology entry
+      const finalCategory = category || 'other';
+
+      const embeddingText = [corrected, original].join(' ');
+
+      const embeddingResponse = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: embeddingText,
+      });
+
+      const embedding = embeddingResponse.data[0].embedding;
+      const embeddingStr = JSON.stringify(embedding);
+
+      const result = await sql`
+        INSERT INTO hvac_terminology (
+          standard_term,
+          category,
+          variations,
+          description,
+          embedding
+        ) VALUES (
+          ${corrected},
+          ${finalCategory},
+          ${[original]},
+          ${'Auto-learned from user input'},
+          ${embeddingStr}::vector(1536)
+        )
+        RETURNING id, standard_term, category, variations
+      `;
+
+      console.log(`  ✓ Created new term "${corrected}" with variation "${original}"`);
+
+      res.json({
+        success: true,
+        message: 'New term created successfully',
+        term: result[0]
+      });
+    }
+
+  } catch (error) {
+    console.error('Error confirming terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all terminology
+app.get('/api/terminology', async (req, res) => {
+  try {
+    const { category } = req.query;
+
+    let terms;
+    if (category) {
+      terms = await sql`
+        SELECT id, standard_term, category, variations, description, created_at
+        FROM hvac_terminology
+        WHERE category = ${category}
+        ORDER BY standard_term
+      `;
+    } else {
+      terms = await sql`
+        SELECT id, standard_term, category, variations, description, created_at
+        FROM hvac_terminology
+        ORDER BY category, standard_term
+      `;
+    }
+
+    res.json({ terms });
+
+  } catch (error) {
+    console.error('Error fetching terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get terminology categories
+app.get('/api/terminology/categories', async (req, res) => {
+  try {
+    const categories = await sql`
+      SELECT category, COUNT(*) as count
+      FROM hvac_terminology
+      GROUP BY category
+      ORDER BY category
+    `;
+
+    res.json({ categories });
+
+  } catch (error) {
+    console.error('Error fetching terminology categories:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add new terminology
+app.post('/api/terminology', async (req, res) => {
+  try {
+    const { standard_term, category, variations, description } = req.body;
+
+    if (!standard_term || !category || !variations || variations.length === 0) {
+      return res.status(400).json({ error: 'standard_term, category, and variations are required' });
+    }
+
+    // Create comprehensive embedding text
+    const embeddingText = [
+      standard_term,
+      ...variations,
+      description || ''
+    ].join(' ');
+
+    // Generate embedding
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: embeddingText,
+    });
+
+    const embedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(embedding);
+
+    // Insert into database
+    const result = await sql`
+      INSERT INTO hvac_terminology (
+        standard_term,
+        category,
+        variations,
+        description,
+        embedding
+      ) VALUES (
+        ${standard_term},
+        ${category},
+        ${variations},
+        ${description || ''},
+        ${embeddingStr}::vector(1536)
+      )
+      RETURNING id, standard_term, category, variations, description, created_at
+    `;
+
+    console.log(`✓ Added new term: ${standard_term} (${category})`);
+
+    res.json({
+      success: true,
+      term: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error adding terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update terminology
+app.put('/api/terminology/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { standard_term, category, variations, description } = req.body;
+
+    if (!standard_term || !category || !variations || variations.length === 0) {
+      return res.status(400).json({ error: 'standard_term, category, and variations are required' });
+    }
+
+    // Create comprehensive embedding text
+    const embeddingText = [
+      standard_term,
+      ...variations,
+      description || ''
+    ].join(' ');
+
+    // Generate new embedding
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: embeddingText,
+    });
+
+    const embedding = embeddingResponse.data[0].embedding;
+    const embeddingStr = JSON.stringify(embedding);
+
+    // Update in database
+    const result = await sql`
+      UPDATE hvac_terminology
+      SET
+        standard_term = ${standard_term},
+        category = ${category},
+        variations = ${variations},
+        description = ${description || ''},
+        embedding = ${embeddingStr}::vector(1536),
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING id, standard_term, category, variations, description, updated_at
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Term not found' });
+    }
+
+    console.log(`✓ Updated term: ${standard_term} (${category})`);
+
+    res.json({
+      success: true,
+      term: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error updating terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete terminology
+app.delete('/api/terminology/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await sql`
+      DELETE FROM hvac_terminology
+      WHERE id = ${id}
+      RETURNING standard_term, category
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Term not found' });
+    }
+
+    console.log(`✓ Deleted term: ${result[0].standard_term} (${result[0].category})`);
+
+    res.json({
+      success: true,
+      deleted: result[0]
+    });
+
+  } catch (error) {
+    console.error('Error deleting terminology:', error);
     res.status(500).json({ error: error.message });
   }
 });

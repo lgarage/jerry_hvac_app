@@ -40,6 +40,16 @@ const sampleParts = [
     common_uses: ['RTU', 'Split System', 'Heat Pump']
   },
   {
+    part_number: 'R22-LB',
+    name: 'R-22 Refrigerant (per lb)',
+    description: 'R-22 (Freon) refrigerant for legacy air conditioning systems. Sold per pound. Being phased out, used in older systems.',
+    category: 'Refrigerant',
+    type: 'consumable',
+    price: 85.00,
+    thumbnail_url: 'https://via.placeholder.com/150?text=R22',
+    common_uses: ['RTU', 'Split System', 'Legacy Equipment']
+  },
+  {
     part_number: 'FILT-20X25X1',
     name: 'Air Filter 20x25x1 MERV 8',
     description: 'Pleated air filter 20x25x1 inch MERV 8 rating. Standard residential and light commercial filter.',
