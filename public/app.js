@@ -80,21 +80,21 @@ window.addEventListener('DOMContentLoaded', () => {
   loadRepairsFromLocalStorage();
 });
 
-// Push-to-talk functionality
-floatingMic.addEventListener('mousedown', startRecording);
-floatingMic.addEventListener('mouseup', stopRecording);
+// Push-to-talk functionality - context-aware
+floatingMic.addEventListener('mousedown', contextAwareStartRecording);
+floatingMic.addEventListener('mouseup', contextAwareStopRecording);
 floatingMic.addEventListener('mouseleave', (e) => {
-  if (isRecording) stopRecording();
+  if (isRecording || isModalRecording) contextAwareStopRecording();
 });
 
 // Touch support for mobile
 floatingMic.addEventListener('touchstart', (e) => {
   e.preventDefault();
-  startRecording();
+  contextAwareStartRecording();
 });
 floatingMic.addEventListener('touchend', (e) => {
   e.preventDefault();
-  stopRecording();
+  contextAwareStopRecording();
 });
 
 submitBtn.addEventListener('click', handleSubmit);
@@ -106,7 +106,6 @@ partsModal.addEventListener('click', (e) => {
 // Add Part Modal event listeners
 const addPartModal = document.getElementById('addPartModal');
 const closeAddPartModalBtn = document.getElementById('closeAddPartModal');
-const modalRecordBtn = document.getElementById('modalRecordBtn');
 const addPartForm = document.getElementById('addPartForm');
 const cancelBtn = document.querySelector('#addPartForm .btn-cancel');
 
@@ -122,10 +121,6 @@ if (addPartModal) {
 
 if (cancelBtn) {
   cancelBtn.addEventListener('click', closeAddPartModal);
-}
-
-if (modalRecordBtn) {
-  modalRecordBtn.addEventListener('click', toggleModalRecording);
 }
 
 if (addPartForm) {
@@ -211,6 +206,28 @@ async function handleFloatingSubmit() {
 
   // Clear the floating textarea after successful submit
   floatingTextarea.value = '';
+}
+
+// Context-aware recording wrappers
+function contextAwareStartRecording() {
+  // Check if Add Part modal is open
+  const addPartModal = document.getElementById('addPartModal');
+  if (addPartModal && !addPartModal.classList.contains('hidden')) {
+    // Modal is open - record for part details
+    startModalRecording();
+  } else {
+    // Normal repair notes recording
+    startRecording();
+  }
+}
+
+function contextAwareStopRecording() {
+  // Check which type of recording is active
+  if (isModalRecording) {
+    stopModalRecording();
+  } else if (isRecording) {
+    stopRecording();
+  }
 }
 
 async function startRecording() {
@@ -2084,6 +2101,14 @@ function openAddPartModal(partName) {
     addPartModal.classList.remove('hidden');
   }
 
+  // Show context label on floating mic
+  const floatingMicLabel = document.getElementById('floatingMicLabel');
+  const floatingMicLabelText = document.getElementById('floatingMicLabelText');
+  if (floatingMicLabel && floatingMicLabelText) {
+    floatingMicLabelText.textContent = `🎙️ Recording Part Details for "${partName}"`;
+    floatingMicLabel.classList.remove('hidden');
+  }
+
   // Clear other fields
   document.getElementById('partNumber').value = '';
   document.getElementById('partCategory').value = '';
@@ -2100,6 +2125,12 @@ function closeAddPartModal() {
   }
   currentPartToAdd = '';
 
+  // Hide context label on floating mic
+  const floatingMicLabel = document.getElementById('floatingMicLabel');
+  if (floatingMicLabel) {
+    floatingMicLabel.classList.add('hidden');
+  }
+
   // Stop recording if active
   if (isModalRecording) {
     stopModalRecording();
@@ -2107,14 +2138,6 @@ function closeAddPartModal() {
 
   // Hide AI status indicator
   hideModalAiStatus();
-}
-
-async function toggleModalRecording() {
-  if (isModalRecording) {
-    stopModalRecording();
-  } else {
-    await startModalRecording();
-  }
 }
 
 async function startModalRecording() {
@@ -2148,13 +2171,11 @@ async function startModalRecording() {
     modalMediaRecorder.start();
     isModalRecording = true;
 
-    const modalRecordBtn = document.getElementById('modalRecordBtn');
-    const modalRecordIcon = document.getElementById('modalRecordIcon');
-    const modalRecordText = document.getElementById('modalRecordText');
-
-    if (modalRecordBtn) modalRecordBtn.classList.add('recording');
-    if (modalRecordIcon) modalRecordIcon.textContent = '⏹️';
-    if (modalRecordText) modalRecordText.textContent = 'Stop Recording';
+    // Update floating mic to show recording state
+    const floatingMic = document.getElementById('floatingMic');
+    if (floatingMic) {
+      floatingMic.classList.add('recording');
+    }
 
     // Show AI status indicator
     showModalAiStatus('🎤 Recording...', 'Speak now to describe the part');
@@ -2171,13 +2192,11 @@ function stopModalRecording() {
     modalMediaRecorder.stop();
     isModalRecording = false;
 
-    const modalRecordBtn = document.getElementById('modalRecordBtn');
-    const modalRecordIcon = document.getElementById('modalRecordIcon');
-    const modalRecordText = document.getElementById('modalRecordText');
-
-    if (modalRecordBtn) modalRecordBtn.classList.remove('recording');
-    if (modalRecordIcon) modalRecordIcon.textContent = '🎤';
-    if (modalRecordText) modalRecordText.textContent = 'Record Part Details';
+    // Update floating mic to remove recording state
+    const floatingMic = document.getElementById('floatingMic');
+    if (floatingMic) {
+      floatingMic.classList.remove('recording');
+    }
 
     // Show processing status
     showModalAiStatus('⏳ Processing audio...', 'Converting to text');

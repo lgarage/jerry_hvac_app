@@ -635,7 +635,8 @@
         transform: translateX(-50%);
         z-index: 1001;
         display: flex;
-        align-items: flex-end;
+        flex-direction: column;
+        align-items: center;
         gap: 12px;
         transition: all 0.3s ease;
       }
@@ -643,6 +644,30 @@
       .floating-input-container.keyboard-mode {
         left: 20%;
         transform: translateX(0);
+      }
+
+      /* Floating Mic Context Label */
+      .floating-mic-label {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 10px 20px;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        white-space: nowrap;
+        animation: slideDown 0.3s ease;
+      }
+
+      @keyframes slideDown {
+        from {
+          opacity: 0;
+          transform: translateY(-10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
 
       /* Keyboard Toggle Button */
@@ -812,28 +837,36 @@
 
       <!-- Floating Input Controls -->
       <div id="floatingInputContainer" class="floating-input-container">
-        <!-- Floating Push-to-Talk Mic Button -->
-        <button id="floatingMic" class="floating-mic">
-          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white">
-            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-          </svg>
-          <div id="recordingIndicator" class="recording-indicator hidden">
-            <div class="recording-timer">0:00</div>
-          </div>
-        </button>
+        <!-- Context Label -->
+        <div id="floatingMicLabel" class="floating-mic-label hidden">
+          <span id="floatingMicLabelText">Recording Part Details</span>
+        </div>
 
-        <!-- Keyboard Toggle Button -->
-        <button id="keyboardToggle" class="keyboard-toggle" title="Toggle keyboard input">
+        <!-- Buttons Row -->
+        <div style="display: flex; align-items: flex-end; gap: 12px;">
+          <!-- Floating Push-to-Talk Mic Button -->
+          <button id="floatingMic" class="floating-mic">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+            <div id="recordingIndicator" class="recording-indicator hidden">
+              <div class="recording-timer">0:00</div>
+            </div>
+          </button>
+
+          <!-- Keyboard Toggle Button -->
+          <button id="keyboardToggle" class="keyboard-toggle" title="Toggle keyboard input">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white">
             <path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/>
           </svg>
         </button>
 
-        <!-- Floating Text Input (hidden by default) -->
-        <div id="floatingTextInput" class="floating-text-input hidden">
-          <textarea id="floatingTextarea" placeholder="Type your repair notes or search term..." rows="3"></textarea>
-          <button id="floatingSubmit" class="floating-submit-btn">Send</button>
+          <!-- Floating Text Input (hidden by default) -->
+          <div id="floatingTextInput" class="floating-text-input hidden">
+            <textarea id="floatingTextarea" placeholder="Type your repair notes or search term..." rows="3"></textarea>
+            <button id="floatingSubmit" class="floating-submit-btn">Send</button>
+          </div>
         </div>
       </div>
 
@@ -858,14 +891,11 @@
           <button class="close-btn" id="closeAddPartModal">&times;</button>
         </div>
 
-        <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
-          <p style="margin: 0 0 12px 0; color: #4b5563; font-size: 0.9rem;">
-            <strong>Speak the part details:</strong> Describe the part including name, part number, category, price, and any other relevant information.
+        <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+          <p style="margin: 0; color: #4b5563; font-size: 0.9rem;">
+            <strong>💬 Use the purple microphone button at the bottom of the screen</strong><br>
+            <span style="font-size: 0.85rem;">Hold down and speak to describe the part including name, part number, category, price, and other details.</span>
           </p>
-          <button id="modalRecordBtn" class="btn-secondary" style="width: 100%;">
-            <span id="modalRecordIcon">🎤</span>
-            <span id="modalRecordText">Record Part Details</span>
-          </button>
         </div>
 
         <!-- AI Processing Indicator -->
