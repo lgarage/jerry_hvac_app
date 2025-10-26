@@ -17,6 +17,39 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+// Simple transcription endpoint for conversational prompts
+app.post('/api/transcribe', async (req, res) => {
+  try {
+    const { audio } = req.body;
+
+    if (!audio) {
+      return res.status(400).json({ error: 'No audio provided' });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
+
+    const audioBuffer = Buffer.from(audio.split(',')[1] || audio, 'base64');
+    const file = new File([audioBuffer], 'audio.wav', { type: 'audio/wav' });
+
+    const transcription = await openai.audio.transcriptions.create({
+      file: file,
+      model: 'whisper-1',
+      prompt: 'HVAC technician providing information. Common terms: R-410A, R-22, refrigerant, parts, prices, Honeywell, Carrier, Trane, damper, actuator, contactor, capacitor, compressor.'
+    });
+
+    const text = transcription.text || '';
+    console.log('📝 Transcribed (conversational):', text);
+
+    res.json({ text });
+
+  } catch (error) {
+    console.error('Error transcribing audio:', error);
+    res.status(500).json({ error: 'Transcription failed: ' + error.message });
+  }
+});
+
 app.post('/api/parse', async (req, res) => {
   try {
     const { audio, text } = req.body;
