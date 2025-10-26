@@ -6,6 +6,10 @@ let currentRepairIndex = null; // Track which repair is getting parts
 let recordingStartTime = null;
 let recordingTimerInterval = null;
 
+// Conversational command state
+let conversationState = null; // Tracks multi-step voice commands
+// Format: { type: 'add_part' | 'add_term', data: {}, nextField: 'name', rawCommand: '' }
+
 // LocalStorage persistence functions
 function saveRepairsToLocalStorage() {
   try {
@@ -373,6 +377,43 @@ async function submitToBackend(audio, text) {
     document.getElementById('submitText').textContent = 'Processing...';
     submitBtn.appendChild(loadingSpinner);
 
+    // Check if we're in conversational command mode
+    if (conversationState) {
+      // Get the user's response (from text or transcribe audio first)
+      let userResponse = text;
+
+      if (audio && !text) {
+        // Need to transcribe audio first
+        showStatus('Transcribing your answer...', 'info');
+        const transcribeResponse = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio })
+        });
+
+        if (transcribeResponse.ok) {
+          const transcribeData = await transcribeResponse.json();
+          userResponse = transcribeData.text;
+        } else {
+          throw new Error('Failed to transcribe audio');
+        }
+      }
+
+      // Continue the conversation with the user's answer
+      await continueConversationalCommand(userResponse);
+
+      // Clear input
+      jobNotesTextarea.value = '';
+
+      submitBtn.disabled = false;
+      floatingMic.disabled = false;
+      const spinner = document.getElementById('loadingSpinner');
+      if (spinner) spinner.remove();
+      document.getElementById('submitText').textContent = 'Parse Notes';
+
+      return; // Exit early, we're handling this differently
+    }
+
     // Check if parts modal is open - if so, only transcribe for search
     const isPartsModalOpen = partsModal && !partsModal.classList.contains('hidden');
 
@@ -424,6 +465,20 @@ function displayResults(result) {
   // Handle voice commands (add part/term) differently
   if (result.command_type === 'add_part' || result.command_type === 'add_term') {
     const commandName = result.command_type === 'add_part' ? 'Part' : 'Term';
+
+    // Check if we need more information (conversational mode)
+    if (result.needs_more_info) {
+      // Enter conversation mode
+      conversationState = {
+        type: result.command_type,
+        data: result.partial_data || {},
+        missingFields: result.missing_fields || [],
+        rawCommand: result.raw_transcription
+      };
+
+      showConversationalPrompt();
+      return; // Wait for user's next response
+    }
 
     if (result.success) {
       showStatus(`✅ ${result.message}`, 'success');
@@ -628,6 +683,133 @@ function displayResults(result) {
   // Show new term suggestions (add to glossary)
   if (result.newTerms && result.newTerms.length > 0) {
     showNewTermSuggestions(result.newTerms);
+  }
+}
+
+// Show conversational prompt for missing fields
+function showConversationalPrompt() {
+  if (!conversationState || conversationState.missingFields.length === 0) {
+    conversationState = null;
+    return;
+  }
+
+  const nextField = conversationState.missingFields[0];
+  const commandName = conversationState.type === 'add_part' ? 'Part' : 'Term';
+
+  // Create friendly prompts for each field
+  const prompts = {
+    add_part: {
+      name: "What's the name of the part?",
+      price: "What's the price? (e.g., '$45' or 'forty-five dollars')",
+      category: "What category? (electrical, refrigerant, controls, filters, supplies, or other)",
+      type: "Is it consumable or inventory?"
+    },
+    add_term: {
+      standard_term: "What's the standard term you want to add?",
+      category: "What category? (refrigerant, equipment, voltage, measurement, part_type, action, brand, or other)",
+      variations: "What are some variations? (optional - just say 'none' to skip)"
+    }
+  };
+
+  const prompt = prompts[conversationState.type][nextField] || `What's the ${nextField}?`;
+
+  // Show big, obvious prompt
+  showStatus(`📣 ${prompt}`, 'info');
+
+  // Also show in transcription area
+  transcriptionText.innerHTML = `
+    <div style="font-size: 1.1rem; font-weight: 600; color: #667eea; margin-bottom: 8px;">
+      Adding ${commandName}: Step ${Object.keys(conversationState.data).length + 1}
+    </div>
+    <div style="font-size: 1.3rem; color: #1f2937;">
+      ${prompt}
+    </div>
+    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 0.9rem;">
+      💡 Tip: Just speak your answer, or type it and press "Parse Notes"
+    </div>
+  `;
+  transcriptionSection.classList.remove('hidden');
+
+  // Show what we've collected so far
+  const dataCard = document.createElement('div');
+  dataCard.className = 'repair-card';
+  dataCard.style.borderColor = '#667eea';
+  dataCard.innerHTML = `
+    <div class="equipment-badge" style="background: #667eea;">Adding ${commandName}</div>
+    <div class="section" style="margin-top: 12px;">
+      <div class="section-title">Information Collected</div>
+      ${Object.keys(conversationState.data).length > 0 ?
+        Object.entries(conversationState.data)
+          .map(([key, value]) => `<p><strong>${key}:</strong> ${value}</p>`)
+          .join('')
+        : '<p style="color: #6b7280; font-style: italic;">No information yet</p>'
+      }
+    </div>
+    <div class="section">
+      <div class="section-title">Still Need</div>
+      <ul style="margin-left: 20px; color: #6b7280;">
+        ${conversationState.missingFields.map((field, idx) =>
+          `<li style="${idx === 0 ? 'font-weight: 600; color: #667eea;' : ''}">${field}${idx === 0 ? ' ← answering now' : ''}</li>`
+        ).join('')}
+      </ul>
+    </div>
+  `;
+
+  repairGrid.innerHTML = '';
+  repairGrid.appendChild(dataCard);
+  resultsSection.classList.add('visible');
+
+  // Focus the input
+  jobNotesTextarea.focus();
+  jobNotesTextarea.placeholder = `Say or type your answer...`;
+}
+
+// Handle continuing a conversational command
+async function continueConversationalCommand(userResponse) {
+  if (!conversationState) return;
+
+  const nextField = conversationState.missingFields[0];
+
+  showStatus('Processing your answer...', 'info');
+
+  try {
+    const response = await fetch('/api/continue-command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commandType: conversationState.type,
+        currentData: conversationState.data,
+        fieldToFill: nextField,
+        userResponse: userResponse
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to process your answer');
+    }
+
+    const result = await response.json();
+
+    // Update conversation state with the new data
+    if (result.needs_more_info) {
+      conversationState.data = result.partial_data;
+      conversationState.missingFields = result.missing_fields;
+      showConversationalPrompt();
+    } else if (result.success) {
+      // Command complete!
+      conversationState = null;
+      jobNotesTextarea.placeholder = 'Type or record your repair notes here... e.g., "RTU-1 low on charge needs 4 pounds 410A, economizer damper actuator is broken"';
+      displayResults(result);
+    } else {
+      // Error
+      showStatus(`❌ ${result.message}`, 'error');
+      conversationState = null;
+    }
+
+  } catch (error) {
+    console.error('Error continuing command:', error);
+    showStatus(`Error: ${error.message}`, 'error');
+    conversationState = null;
   }
 }
 

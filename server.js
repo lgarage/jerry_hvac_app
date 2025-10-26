@@ -52,10 +52,14 @@ app.post('/api/parse', async (req, res) => {
       const partDetails = await parsePartFromVoice(rawTranscription);
 
       if (!partDetails.success) {
+        // Return partial data and prompt for missing fields
         return res.json({
           command_type: 'add_part',
           success: false,
-          message: `I couldn't extract all the part details. Missing: ${partDetails.missing_fields?.join(', ') || 'unknown'}`,
+          needs_more_info: true,
+          partial_data: partDetails,
+          missing_fields: partDetails.missing_fields || ['name', 'price'],
+          message: `Starting to add a new part. I'll ask you for the details.`,
           raw_transcription: rawTranscription
         });
       }
@@ -118,10 +122,14 @@ app.post('/api/parse', async (req, res) => {
       const termDetails = await parseTermFromVoice(rawTranscription);
 
       if (!termDetails.success) {
+        // Return partial data and prompt for missing fields
         return res.json({
           command_type: 'add_term',
           success: false,
-          message: `I couldn't extract all the term details. Missing: ${termDetails.missing_fields?.join(', ') || 'unknown'}`,
+          needs_more_info: true,
+          partial_data: termDetails,
+          missing_fields: termDetails.missing_fields || ['standard_term', 'category'],
+          message: `Starting to add a new term. I'll ask you for the details.`,
           raw_transcription: rawTranscription
         });
       }
@@ -187,6 +195,142 @@ app.post('/api/parse', async (req, res) => {
 
   } catch (error) {
     console.error('Error in /api/parse:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Handle conversational command - fill in missing information step by step
+app.post('/api/continue-command', async (req, res) => {
+  try {
+    const { commandType, currentData, fieldToFill, userResponse } = req.body;
+
+    console.log(`\n🗣️ Continuing ${commandType} command, filling: ${fieldToFill}`);
+    console.log(`   User said: "${userResponse}"`);
+
+    // Use AI to extract the specific field value from the user's response
+    const systemPrompt = `Extract the ${fieldToFill} value from the user's response. Return ONLY the extracted value, cleaned up.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userResponse }
+      ],
+      temperature: 0.0
+    });
+
+    const extractedValue = completion.choices[0].message.content.trim();
+    console.log(`   Extracted ${fieldToFill}: "${extractedValue}"`);
+
+    // Update the data with the new field
+    const updatedData = { ...currentData, [fieldToFill]: extractedValue };
+
+    // Determine what's still missing
+    let missingFields = [];
+    if (commandType === 'add_part') {
+      if (!updatedData.name) missingFields.push('name');
+      if (!updatedData.price) missingFields.push('price');
+      // Category and type are optional, will have defaults
+    } else if (commandType === 'add_term') {
+      if (!updatedData.standard_term) missingFields.push('standard_term');
+      if (!updatedData.category) missingFields.push('category');
+      // Variations are optional
+    }
+
+    // If still missing fields, prompt for the next one
+    if (missingFields.length > 0) {
+      return res.json({
+        command_type: commandType,
+        success: false,
+        needs_more_info: true,
+        partial_data: updatedData,
+        missing_fields: missingFields,
+        message: `Got it! Now collecting more information...`
+      });
+    }
+
+    // All required fields collected! Now complete the command
+    if (commandType === 'add_part') {
+      // Add the part
+      const partNumber = (updatedData.name || 'PART')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '-')
+        .substring(0, 20);
+
+      const category = updatedData.category || 'Other';
+      const type = updatedData.type || 'inventory';
+      const price = parseFloat(String(updatedData.price).replace(/[^0-9.]/g, '')) || 0;
+
+      // Generate embedding
+      const embeddingText = [updatedData.name, category].join(' ');
+      const embeddingResponse = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: embeddingText,
+      });
+      const embedding = embeddingResponse.data[0].embedding;
+      const embeddingStr = JSON.stringify(embedding);
+
+      // Insert into database
+      const result = await sql`
+        INSERT INTO parts (
+          part_number, name, description, category, type, price,
+          thumbnail_url, common_uses, embedding
+        ) VALUES (
+          ${partNumber}, ${updatedData.name}, ${'Added via voice command'},
+          ${category}, ${type}, ${price},
+          ${'https://via.placeholder.com/150?text=' + encodeURIComponent(updatedData.name.substring(0, 10))},
+          ${[]}, ${embeddingStr}::vector(1536)
+        )
+        RETURNING id, part_number, name, category, type, price
+      `;
+
+      console.log(`✅ Added new part via conversation: ${updatedData.name}`);
+
+      return res.json({
+        command_type: 'add_part',
+        success: true,
+        message: `Added "${updatedData.name}" to parts catalog at $${price.toFixed(2)}`,
+        part: result[0]
+      });
+
+    } else if (commandType === 'add_term') {
+      // Add the term
+      const category = updatedData.category || 'other';
+      const variations = updatedData.variations || [updatedData.standard_term];
+
+      // Generate embedding
+      const embeddingText = [updatedData.standard_term, category, ...variations].join(' ');
+      const embeddingResponse = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: embeddingText,
+      });
+      const embedding = embeddingResponse.data[0].embedding;
+      const embeddingStr = JSON.stringify(embedding);
+
+      // Insert into database
+      const result = await sql`
+        INSERT INTO terminology (
+          standard_term, category, variations, description, embedding
+        ) VALUES (
+          ${updatedData.standard_term}, ${category},
+          ${Array.isArray(variations) ? variations : [variations]}, ${''},
+          ${embeddingStr}::vector(1536)
+        )
+        RETURNING id, standard_term, category, variations
+      `;
+
+      console.log(`✅ Added new term via conversation: ${updatedData.standard_term}`);
+
+      return res.json({
+        command_type: 'add_term',
+        success: true,
+        message: `Added "${updatedData.standard_term}" to terminology`,
+        term: result[0]
+      });
+    }
+
+  } catch (error) {
+    console.error('Error in /api/continue-command:', error);
     res.status(500).json({ error: error.message });
   }
 });
