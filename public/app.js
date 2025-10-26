@@ -2656,9 +2656,13 @@ function openAddPartModal(partName) {
   document.getElementById('partNumber').value = '';
   document.getElementById('partCategory').value = '';
   document.getElementById('partType').value = '';
+  document.getElementById('partQuantity').value = '1'; // Reset to default quantity
   document.getElementById('partPrice').value = '';
   document.getElementById('partDescription').value = '';
   document.getElementById('partCommonUses').value = '';
+
+  // Clear field history for undo functionality
+  modalFieldHistory = {};
 }
 
 function closeAddPartModal() {
@@ -2854,6 +2858,7 @@ async function handleAddPart(e) {
     part_number: document.getElementById('partNumber').value.trim(),
     category: document.getElementById('partCategory').value,
     type: document.getElementById('partType').value,
+    quantity: parseInt(document.getElementById('partQuantity').value) || 1,
     price: parseFloat(document.getElementById('partPrice').value) || 0,
     description: document.getElementById('partDescription').value.trim(),
     common_uses: document.getElementById('partCommonUses').value.trim()
