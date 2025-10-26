@@ -2256,6 +2256,8 @@ async function processModalAudio(audioBlob) {
 
     const result = await response.json();
 
+    console.log('Parse details result:', result); // Debug log
+
     // Show raw transcription
     if (result.transcription) {
       const transcriptionSection = document.getElementById('modalTranscription');
@@ -2263,11 +2265,13 @@ async function processModalAudio(audioBlob) {
       const toggleBtn = document.getElementById('toggleTranscription');
 
       if (transcriptionSection && transcriptionText) {
-        transcriptionText.textContent = result.transcription;
-        transcriptionText.classList.remove('hidden'); // Show by default
+        // Convert to string explicitly
+        const transcriptionString = String(result.transcription);
+        transcriptionText.textContent = transcriptionString;
+        transcriptionText.classList.remove('hidden');
         transcriptionSection.classList.remove('hidden');
         if (toggleBtn) {
-          toggleBtn.textContent = 'Hide'; // Button shows "Hide" since text is visible
+          toggleBtn.textContent = 'Hide';
         }
       }
     }
