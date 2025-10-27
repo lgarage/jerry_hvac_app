@@ -637,21 +637,10 @@ if (addPartForm) {
 }
 
 // Toggle transcription viewer
-const toggleTranscriptionBtn = document.getElementById('toggleTranscription');
-if (toggleTranscriptionBtn) {
-  toggleTranscriptionBtn.addEventListener('click', () => {
-    const transcriptionText = document.getElementById('modalTranscriptionText');
-    if (transcriptionText) {
-      const isHidden = transcriptionText.classList.contains('hidden');
-      if (isHidden) {
-        transcriptionText.classList.remove('hidden');
-        toggleTranscriptionBtn.textContent = 'Hide';
-      } else {
-        transcriptionText.classList.add('hidden');
-        toggleTranscriptionBtn.textContent = 'Show';
-      }
-    }
-  });
+// Compact pill view button - toggles transcript drawer
+const pillViewBtn = document.getElementById('pillViewBtn');
+if (pillViewBtn) {
+  pillViewBtn.addEventListener('click', toggleTranscriptDrawer);
 }
 
 // Keyboard toggle functionality
@@ -2683,14 +2672,10 @@ function closeAddPartModal() {
     stopModalRecording();
   }
 
-  // Hide AI status indicator
-  hideModalAiStatus();
-
-  // Hide transcription section
-  const transcriptionSection = document.getElementById('modalTranscription');
-  if (transcriptionSection) {
-    transcriptionSection.classList.add('hidden');
-  }
+  // Hide all modal UI elements
+  hideCompactPill();
+  hideDropdownHints();
+  hideTranscriptDrawer();
 }
 
 async function startModalRecording() {
@@ -2730,8 +2715,11 @@ async function startModalRecording() {
       floatingMic.classList.add('recording');
     }
 
-    // Show AI status indicator
-    showModalAiStatus('🎤 Recording...', 'Speak now to describe the part');
+    // Show dropdown hints while recording
+    showDropdownHints();
+
+    // Show compact pill
+    showCompactPill('🎤 Recording...', 'Speak now to describe the part');
 
   } catch (error) {
     console.error('Error starting modal recording:', error);
@@ -2751,8 +2739,11 @@ function stopModalRecording() {
       floatingMic.classList.remove('recording');
     }
 
+    // Hide dropdown hints after a short delay
+    hideDropdownHints(3000);
+
     // Show processing status
-    showModalAiStatus('⏳ Processing audio...', 'Converting to text');
+    showCompactPill('⏳ Processing audio...', 'Converting to text');
   }
 }
 
@@ -2904,35 +2895,149 @@ async function handleAddPart(e) {
   }
 }
 
-// Helper functions for modal AI status indicator
-function showModalAiStatus(mainText, subtext, isComplete = false) {
-  const statusDiv = document.getElementById('modalAiStatus');
-  const mainTextDiv = document.getElementById('modalAiStatusText');
-  const subtextDiv = document.getElementById('modalAiStatusSubtext');
+// ========== COMPACT STATUS PILL FUNCTIONS ==========
 
-  if (statusDiv && mainTextDiv && subtextDiv) {
-    mainTextDiv.textContent = mainText;
-    subtextDiv.textContent = subtext;
-    statusDiv.classList.remove('hidden');
+/**
+ * Show the compact status pill with optional transcript preview
+ * @param {string} statusText - Main status message
+ * @param {string} transcript - Optional transcript snippet to show
+ * @param {object} options - Additional options { showView, showUndo, undoData }
+ */
+function showCompactPill(statusText, transcript = '', options = {}) {
+  const pill = document.getElementById('compactStatusPill');
+  const statusSpan = document.getElementById('pillStatus');
+  const transcriptSpan = document.getElementById('pillTranscript');
+  const viewBtn = document.getElementById('pillViewBtn');
+  const undoBtn = document.getElementById('pillUndoBtn');
 
-    // If complete (success or error), change styling
-    if (isComplete) {
-      const spinner = statusDiv.querySelector('.loading-spinner');
-      if (spinner) {
-        spinner.style.display = 'none';
+  if (!pill || !statusSpan) return;
+
+  statusSpan.textContent = statusText;
+
+  // Show transcript snippet (truncate if needed)
+  if (transcriptSpan) {
+    if (transcript && transcript.length > 0) {
+      const truncated = transcript.length > 50 ? transcript.substring(0, 50) + '...' : transcript;
+      transcriptSpan.textContent = `"${truncated}"`;
+    } else {
+      transcriptSpan.textContent = '';
+    }
+  }
+
+  // Show/hide View button
+  if (viewBtn) {
+    if (options.showView && transcript) {
+      viewBtn.classList.remove('hidden');
+    } else {
+      viewBtn.classList.add('hidden');
+    }
+  }
+
+  // Show/hide Undo button
+  if (undoBtn) {
+    if (options.showUndo) {
+      undoBtn.classList.remove('hidden');
+      if (options.undoData) {
+        undoBtn.onclick = () => handleUndoFieldChange(options.undoData);
       }
     } else {
-      const spinner = statusDiv.querySelector('.loading-spinner');
-      if (spinner) {
-        spinner.style.display = 'block';
-      }
+      undoBtn.classList.add('hidden');
+    }
+  }
+
+  pill.classList.remove('hidden');
+}
+
+/**
+ * Hide the compact status pill
+ */
+function hideCompactPill() {
+  const pill = document.getElementById('compactStatusPill');
+  if (pill) {
+    pill.classList.add('hidden');
+  }
+}
+
+/**
+ * Show dropdown hints (categories and types)
+ */
+function showDropdownHints() {
+  const hints = document.getElementById('dropdownHints');
+  if (hints) {
+    hints.classList.remove('hidden');
+  }
+}
+
+/**
+ * Hide dropdown hints
+ * @param {number} delay - Delay in ms before hiding (default: 0)
+ */
+function hideDropdownHints(delay = 0) {
+  const hints = document.getElementById('dropdownHints');
+  if (hints) {
+    if (delay > 0) {
+      setTimeout(() => hints.classList.add('hidden'), delay);
+    } else {
+      hints.classList.add('hidden');
     }
   }
 }
 
-function hideModalAiStatus() {
-  const statusDiv = document.getElementById('modalAiStatus');
-  if (statusDiv) {
-    statusDiv.classList.add('hidden');
+/**
+ * Show/update the transcript drawer
+ * @param {string} transcript - Full transcription text
+ */
+function showTranscriptDrawer(transcript) {
+  const drawer = document.getElementById('transcriptDrawer');
+  const content = document.getElementById('transcriptContent');
+
+  if (drawer && content) {
+    content.textContent = transcript;
+    drawer.classList.add('open');
   }
+}
+
+/**
+ * Hide the transcript drawer
+ */
+function hideTranscriptDrawer() {
+  const drawer = document.getElementById('transcriptDrawer');
+  if (drawer) {
+    drawer.classList.remove('open');
+  }
+}
+
+/**
+ * Toggle the transcript drawer
+ */
+function toggleTranscriptDrawer() {
+  const drawer = document.getElementById('transcriptDrawer');
+  if (drawer) {
+    drawer.classList.toggle('open');
+  }
+}
+
+/**
+ * Handle undo of field change
+ * @param {object} undoData - Contains { field, oldValue, newValue }
+ */
+function handleUndoFieldChange(undoData) {
+  const fieldId = undoData.field;
+  const oldValue = undoData.oldValue;
+
+  const fieldElement = document.getElementById(fieldId);
+  if (fieldElement) {
+    fieldElement.value = oldValue;
+    showCompactPill('✓ Change undone', '', { showView: false, showUndo: false });
+    setTimeout(() => hideCompactPill(), 2000);
+  }
+}
+
+// Backward compatibility wrappers for old function names
+function showModalAiStatus(mainText, subtext, isComplete = false) {
+  showCompactPill(mainText, subtext, { showView: false, showUndo: false });
+}
+
+function hideModalAiStatus() {
+  hideCompactPill();
 }
