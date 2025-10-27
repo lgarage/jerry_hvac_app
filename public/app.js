@@ -145,12 +145,18 @@ function wordsToNumber(text) {
  * Extract leading quantity with multipliers
  * Examples:
  *   "2 AA batteries" → { quantity: 2, remaining: "AA batteries" }
- *   "two-pack filters" → { quantity: 2, remaining: "filters" }
- *   "pack of 6 screws" → { quantity: 6, remaining: "screws" }
+ *   "12-pack AA batteries" → { quantity: 12, remaining: "AA batteries" }
+ *   "pack of 12 AA batteries" → { quantity: 12, remaining: "AA batteries" }
+ *   "two AAA batteries" → { quantity: 2, remaining: "AAA batteries" }
  *   "3/4 ball valve" → null (embedded fraction, not a quantity)
  */
 function extractLeadingQuantity(text) {
   text = text.trim();
+
+  // Helper to clean remaining text
+  const cleanRemaining = (str) => {
+    return str.replace(/^(of\s+|pack\s+|packs\s+)+/i, '').trim();
+  };
 
   // Skip if starts with fraction pattern (e.g., "3/4 ball valve")
   if (/^\d+\/\d+/.test(text)) {
@@ -168,11 +174,11 @@ function extractLeadingQuantity(text) {
     if (multiplierMatch) {
       const multiplierWord = multiplierMatch[1].toLowerCase();
       const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
-      remaining = multiplierMatch[2];
+      remaining = cleanRemaining(multiplierMatch[2]);
       return { quantity: qty * multiplier, remaining };
     }
 
-    return { quantity: qty, remaining };
+    return { quantity: qty, remaining: cleanRemaining(remaining) };
   }
 
   // Pattern 2: Word-based number at start
@@ -189,37 +195,37 @@ function extractLeadingQuantity(text) {
       }
     }
 
-    const remaining = words.slice(endIndex).join(' ');
+    let remaining = words.slice(endIndex).join(' ');
 
     // Check for multipliers
     const multiplierMatch = remaining.match(/^(pack|packs|pair|pairs|dozen|dozens)\s+(?:of\s+)?(.+)/i);
     if (multiplierMatch) {
       const multiplierWord = multiplierMatch[1].toLowerCase();
       const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
-      return { quantity: wordMatch * multiplier, remaining: multiplierMatch[2] };
+      return { quantity: wordMatch * multiplier, remaining: cleanRemaining(multiplierMatch[2]) };
     }
 
-    return { quantity: wordMatch, remaining };
+    return { quantity: wordMatch, remaining: cleanRemaining(remaining) };
   }
 
-  // Pattern 3: Multiplier word with number (e.g., "pack of 6", "two-pack")
-  const packMatch = text.match(/^(pack|packs|pair|pairs|dozen|dozens)(?:\s+of\s+|\s+|-)(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(.+)/i);
+  // Pattern 3: Multiplier word with number (e.g., "pack of 6", "dozen AA batteries")
+  const packMatch = text.match(/^(pack|packs|pair|pairs|dozen|dozens)(?:\s+of\s+|\s+|-)(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(.+)/i);
   if (packMatch) {
     const multiplierWord = packMatch[1].toLowerCase();
     const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
     const numberPart = packMatch[2];
     const qty = PARSER_CONFIG.numberWords[numberPart.toLowerCase()] || parseFloat(numberPart);
-    return { quantity: qty * multiplier, remaining: packMatch[3] };
+    return { quantity: qty * multiplier, remaining: cleanRemaining(packMatch[3]) };
   }
 
-  // Pattern 4: "two-pack" with no number after
-  const simplePackMatch = text.match(/^(\d+|one|two|three|four|five|six|seven|eight|nine|ten)-(pack|packs|pair|pairs)\s+(.+)/i);
+  // Pattern 4: "12-pack AA batteries" / "two-pack filters"
+  const simplePackMatch = text.match(/^(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)-(pack|packs|pair|pairs)\s+(.+)/i);
   if (simplePackMatch) {
     const numberPart = simplePackMatch[1];
     const multiplierWord = simplePackMatch[2].toLowerCase();
     const qty = PARSER_CONFIG.numberWords[numberPart.toLowerCase()] || parseFloat(numberPart);
     const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
-    return { quantity: qty * multiplier, remaining: simplePackMatch[3] };
+    return { quantity: qty * multiplier, remaining: cleanRemaining(simplePackMatch[3]) };
   }
 
   return null;
@@ -228,13 +234,50 @@ function extractLeadingQuantity(text) {
 /**
  * Extract price from text
  * Examples:
- *   "price 129" → 129.00
- *   "costs thirty dollars" → 30.00
+ *   "a dollar fifty" → 1.50
+ *   "one fifty" → 1.50
+ *   "a buck fifty" → 1.50
+ *   "one and a quarter" → 1.25
  *   "ninety-nine cents" → 0.99
+ *   "price 129" → 129.00
  *   "at 8.50 each" → 8.50
  */
 function extractPrice(text) {
   text = text.toLowerCase();
+
+  // Pattern 0A: "one and a quarter" / "one and a half"
+  const andFractionMatch = text.match(/(one|two|three|four|five|six|seven|eight|nine|ten)\s+and\s+a\s+(quarter|half)/i);
+  if (andFractionMatch) {
+    const base = wordsToNumber(andFractionMatch[1]) || 1;
+    const fraction = andFractionMatch[2] === 'quarter' ? 0.25 : 0.5;
+    return base + fraction;
+  }
+
+  // Pattern 0B: "a dollar fifty" / "a dollar and fifty cents"
+  const aDollarMatch = text.match(/(?:a|one)\s+dollar(?:\s+and)?\s+([a-z]+)(?:\s+cents)?/i);
+  if (aDollarMatch) {
+    const cents = wordsToNumber(aDollarMatch[1]);
+    if (cents !== null) {
+      return 1 + (cents / 100);
+    }
+  }
+
+  // Pattern 0C: "a buck fifty" / "buck fifty"
+  const buckMatch = text.match(/(?:a\s+)?bucks?\s+([a-z]+)/i);
+  if (buckMatch) {
+    const cents = wordsToNumber(buckMatch[1]);
+    if (cents !== null) {
+      return 1 + (cents / 100);
+    }
+  }
+
+  // Pattern 0D: "one fifty" / "two fifty" (standalone, no keyword)
+  const oneFiftyMatch = text.match(/\b(one|two|three|four|five|six|seven|eight|nine)\s+(ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:\s+(?:each|per))?\b/i);
+  if (oneFiftyMatch) {
+    const first = wordsToNumber(oneFiftyMatch[1]) || 0;
+    const second = wordsToNumber(oneFiftyMatch[2]) || 0;
+    return first + (second / 100);
+  }
 
   // Pattern 1: Explicit dollar amount with $ or "dollars"
   const dollarMatch = text.match(/(?:price|cost|costs|at|for)?\s*\$?(\d+(?:\.\d{1,2})?)\s*(?:dollars?|each|per)?/i);
@@ -481,19 +524,63 @@ function parseSpokenPart(transcription, currentFields = {}) {
     }
   }
 
-  // 6. Update name if remaining text is meaningful
-  if (remainingText.length > 0 && (!result.name || remainingText.length > result.name.length)) {
-    if (result.name !== remainingText) {
-      result.name = remainingText;
+  // 6. Name normalization and battery detection
+  if (remainingText.length > 0) {
+    // Clean up name: remove pack/quantity remnants
+    let cleanedName = remainingText
+      .replace(/^(pack|packs|of|pair|pairs|dozen|dozens)\s+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Battery token detection
+    const batteryTokens = ['AA', 'AAA', 'C', 'D', '9V', 'CR2032'];
+    const foundTokens = [];
+    const lowerText = transcription.toLowerCase();
+
+    for (const token of batteryTokens) {
+      const tokenLower = token.toLowerCase();
+      // Check for explicit mentions like "AA batteries" or "triple A"
+      if (lowerText.includes(tokenLower) ||
+          (token === 'AAA' && (lowerText.includes('triple a') || lowerText.includes('triple-a'))) ||
+          (token === 'AA' && (lowerText.includes('double a') || lowerText.includes('double-a')))) {
+        foundTokens.push(token);
+      }
+    }
+
+    // Clarification check: multiple battery sizes or ambiguous
+    if (foundTokens.length > 1) {
+      result.clarify = `Did you mean "${foundTokens[0]} batteries" or "${foundTokens[1]} batteries"?`;
+    } else if (foundTokens.length === 1) {
+      // Single battery type found - normalize name
+      if (!cleanedName.toLowerCase().includes('batter')) {
+        cleanedName = `${foundTokens[0]} batteries`;
+      } else if (!cleanedName.includes(foundTokens[0])) {
+        cleanedName = cleanedName.replace(/batter(y|ies)/i, `${foundTokens[0]} batteries`);
+      }
+    } else if (/batter(y|ies)/i.test(cleanedName) && !foundTokens.length) {
+      // Generic "batteries" without size
+      result.clarify = 'Which battery size? (AA, AAA, C, D, 9V, CR2032)';
+    }
+
+    // Update name if changed and not asking for clarification about it
+    if (cleanedName.length > 0 && (!result.name || cleanedName !== result.name) && !result.clarify) {
+      result.name = cleanedName;
       result.changedFields.push('name');
     }
   }
 
-  // 7. Store full transcription in description if not already set
-  if (!result.description || transcription.length > result.description.length) {
-    if (result.description !== transcription) {
-      result.description = transcription;
-      result.changedFields.push('description');
+  // 7. Description discipline - only set with explicit cue
+  const descriptionCues = ['description', 'note', 'notes', 'details', 'detail'];
+  for (const cue of descriptionCues) {
+    const regex = new RegExp(`\\b${cue}[:\\s]+(.+)`, 'i');
+    const match = transcription.match(regex);
+    if (match) {
+      const desc = match[1].trim();
+      if (result.description !== desc) {
+        result.description = desc;
+        result.changedFields.push('description');
+      }
+      break;
     }
   }
 
@@ -2801,6 +2888,15 @@ async function processModalAudio(audioBlob) {
     console.log('Client-parsed data:', parsedData);
     console.log('Changed fields:', parsedData.changedFields);
 
+    // Step 3.5: Handle clarification requests
+    if (parsedData.clarify) {
+      console.log('Clarification needed:', parsedData.clarify);
+      showCompactPill('❓ Need clarification', parsedData.clarify, { showView: true });
+      // Don't fill ambiguous fields - wait for user to provide more info
+      setTimeout(() => hideCompactPill(), 6000); // Keep visible longer for reading
+      return;
+    }
+
     // Check for reset command
     if (parsedData.resetCommand) {
       showCompactPill('🔄 Resetting fields...', '');
@@ -3100,7 +3196,8 @@ function showTranscriptDrawer(transcript) {
   const content = document.getElementById('transcriptContent');
 
   if (drawer && content) {
-    content.textContent = transcript;
+    // Ensure transcript is always a string, never [object Object]
+    content.textContent = String(transcript || '');
     drawer.classList.add('open');
   }
 }
