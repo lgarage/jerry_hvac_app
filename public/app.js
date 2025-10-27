@@ -22,6 +22,10 @@ let pendingPartIndex = 0;    // Current item index in queue
 let conversationState = null; // Tracks multi-step voice commands
 // Format: { type: 'add_part' | 'add_term', data: {}, nextField: 'name', rawCommand: '' }
 
+// Lexicon cache for normalization
+let LEXICON_CACHE = [];
+let LEXICON_LAST_UPDATED = 0;
+
 // ========== VOICE PARSER CONFIGURATION ==========
 const PARSER_CONFIG = {
   // Hybrid validation settings
@@ -56,6 +60,111 @@ const PARSER_CONFIG = {
     'half': 0.5, 'quarter': 0.25, 'quarters': 0.25
   }
 };
+
+// ========== LEXICON FUNCTIONS ==========
+
+/**
+ * Fetch lexicon from server and cache it
+ */
+async function fetchLexicon() {
+  try {
+    const response = await fetch(`/api/lexicon?since=${LEXICON_LAST_UPDATED}`);
+
+    if (response.status === 304) {
+      // Cache is still fresh
+      console.log('[Lexicon] Cache is up to date');
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch lexicon');
+    }
+
+    const data = await response.json();
+    LEXICON_CACHE = data.lexicon || [];
+    LEXICON_LAST_UPDATED = data.lastUpdated || Date.now();
+
+    console.log(`[Lexicon] Loaded ${LEXICON_CACHE.length} entries`);
+  } catch (error) {
+    console.error('[Lexicon] Error fetching:', error);
+  }
+}
+
+/**
+ * Add a new lexicon entry (for "Teach" feature)
+ */
+async function addLexiconEntry(kind, trigger, replacement, notes = '') {
+  try {
+    const response = await fetch('/api/lexicon', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, trigger, replacement, notes })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to add lexicon entry');
+    }
+
+    const data = await response.json();
+    console.log(`[Lexicon] Added: ${trigger} → ${replacement} (${kind})`);
+
+    // Refresh cache
+    await fetchLexicon();
+
+    return data;
+  } catch (error) {
+    console.error('[Lexicon] Error adding entry:', error);
+    throw error;
+  }
+}
+
+/**
+ * Normalize transcript using lexicon rules
+ * Applies regex, synonyms, and unit replacements
+ */
+function normalizeTranscript(raw, lexicon = LEXICON_CACHE) {
+  if (!raw) return '';
+
+  let t = ' ' + raw.toLowerCase() + ' ';
+
+  console.log('[Normalize] Input:', raw);
+
+  // 1) Apply regex rules first (units, number formats)
+  const regexRules = lexicon.filter(e => e.kind === 'regex');
+  for (const rule of regexRules) {
+    try {
+      const regex = new RegExp(rule.trigger, 'gi');
+      const before = t;
+      t = t.replace(regex, rule.replacement);
+      if (before !== t) {
+        console.log(`[Normalize] Regex: ${rule.trigger} →`, t.trim());
+      }
+    } catch (error) {
+      console.error(`[Normalize] Invalid regex: ${rule.trigger}`, error);
+    }
+  }
+
+  // 2) Apply word/phrase synonyms (replace whole-token matches)
+  const synonymRules = lexicon.filter(e => e.kind === 'synonym' || e.kind === 'replace' || e.kind === 'unit');
+  for (const rule of synonymRules) {
+    // Escape special regex chars in trigger
+    const escapedTrigger = rule.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Match whole word boundaries
+    const regex = new RegExp(`\\b${escapedTrigger}\\b`, 'gi');
+    const before = t;
+    t = t.replace(regex, rule.replacement);
+    if (before !== t) {
+      console.log(`[Normalize] Synonym: "${rule.trigger}" → "${rule.replacement}"`);
+    }
+  }
+
+  // 3) Cleanup: trim and collapse spaces
+  const result = t.trim().replace(/\s+/g, ' ');
+
+  console.log('[Normalize] Output:', result);
+
+  return result;
+}
 
 // ========== VOICE PARSER HELPER FUNCTIONS ==========
 
@@ -441,13 +550,26 @@ function extractPartNumber(text) {
 // ========== MULTI-PART PARSING FUNCTIONS ==========
 
 /**
- * Infer category from part name keywords
+ * Infer category from part name keywords using lexicon
  */
-function inferCategoryFromName(name) {
+function inferCategoryFromName(name, lexicon = LEXICON_CACHE) {
   if (!name) return null;
 
   const nameLower = name.toLowerCase();
-  const categoryKeywords = {
+
+  // Use lexicon category rules
+  const categoryRules = lexicon.filter(e => e.kind === 'category');
+
+  // Find first matching rule (could enhance with scoring later)
+  for (const rule of categoryRules) {
+    if (nameLower.includes(rule.trigger)) {
+      console.log(`[Category] Matched "${rule.trigger}" → ${rule.replacement}`);
+      return rule.replacement;
+    }
+  }
+
+  // Fallback to hardcoded keywords if lexicon doesn't have a match
+  const fallbackKeywords = {
     'Electrical': ['fuse', 'breaker', 'battery', 'wire', 'conductor', 'contactor', 'relay'],
     'Filters': ['filter', 'pleated'],
     'Mechanical': ['belt', 'bearing', 'valve', 'actuator', 'pulley', 'coupling'],
@@ -455,7 +577,7 @@ function inferCategoryFromName(name) {
     'Refrigeration': ['refrigerant', 'compressor', 'evaporator', 'condenser']
   };
 
-  for (const [category, keywords] of Object.entries(categoryKeywords)) {
+  for (const [category, keywords] of Object.entries(fallbackKeywords)) {
     if (keywords.some(keyword => nameLower.includes(keyword))) {
       return category;
     }
@@ -1072,6 +1194,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Load saved repairs
   loadRepairsFromLocalStorage();
+
+  // Load lexicon from server
+  fetchLexicon();
 });
 
 // Push-to-talk functionality - context-aware
@@ -3315,9 +3440,14 @@ async function processModalAudio(audioBlob) {
     }
 
     const transcribeResult = await transcribeResponse.json();
-    const transcription = String(transcribeResult.transcription || '');
+    const rawTranscription = String(transcribeResult.transcription || '');
 
-    console.log('Transcription:', transcription);
+    console.log('[Transcription] Raw:', rawTranscription);
+
+    // Step 1.5: Normalize transcription using lexicon
+    const transcription = normalizeTranscript(rawTranscription);
+
+    console.log('[Transcription] Normalized:', transcription);
 
     // Update pill with transcript snippet and View button
     showCompactPill('🤖 Parsing...', transcription, { showView: true });
@@ -3327,8 +3457,9 @@ async function processModalAudio(audioBlob) {
 
     console.log('[Multi-Part] Detected parts:', detectedParts);
 
-    // Update transcript drawer with detected parts list
-    showTranscriptDrawer(transcription + '\n\n' + renderDetectedList(detectedParts));
+    // Update transcript drawer with both raw and normalized transcription + detected parts
+    const drawerContent = `Raw: ${rawTranscription}\nNormalized: ${transcription}\n\n${renderDetectedList(detectedParts)}`;
+    showTranscriptDrawer(drawerContent);
 
     // If multiple parts detected or single part, queue them
     pendingPartsQueue = detectedParts;

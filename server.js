@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const OpenAI = require('openai');
 const { sql } = require('./db');
 
@@ -16,6 +18,37 @@ app.use(express.static('public'));
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
+
+// ========== LEXICON CACHE ==========
+let lexiconCache = [];
+let lexiconLastUpdated = Date.now();
+
+function loadLexicon() {
+  try {
+    const lexiconPath = path.join(__dirname, 'data', 'lexicon.json');
+    const data = fs.readFileSync(lexiconPath, 'utf8');
+    lexiconCache = JSON.parse(data);
+    lexiconLastUpdated = Date.now();
+    console.log(`✓ Loaded lexicon: ${lexiconCache.length} entries`);
+  } catch (error) {
+    console.error('Error loading lexicon:', error);
+    lexiconCache = [];
+  }
+}
+
+function saveLexicon() {
+  try {
+    const lexiconPath = path.join(__dirname, 'data', 'lexicon.json');
+    fs.writeFileSync(lexiconPath, JSON.stringify(lexiconCache, null, 2), 'utf8');
+    lexiconLastUpdated = Date.now();
+    console.log(`✓ Saved lexicon: ${lexiconCache.length} entries`);
+  } catch (error) {
+    console.error('Error saving lexicon:', error);
+  }
+}
+
+// Load lexicon on startup
+loadLexicon();
 
 // Simple transcription endpoint for conversational prompts
 app.post('/api/transcribe', async (req, res) => {
@@ -2147,6 +2180,112 @@ app.delete('/api/terminology/:id', async (req, res) => {
 
   } catch (error) {
     console.error('Error deleting terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== LEXICON ENDPOINTS ==========
+
+// GET /api/lexicon - Get current lexicon (with optional since parameter for caching)
+app.get('/api/lexicon', (req, res) => {
+  try {
+    const { since } = req.query;
+
+    // If client has cached version and it's still fresh, return 304 Not Modified
+    if (since && parseInt(since) >= lexiconLastUpdated) {
+      return res.status(304).end();
+    }
+
+    res.json({
+      lexicon: lexiconCache,
+      lastUpdated: lexiconLastUpdated
+    });
+  } catch (error) {
+    console.error('Error fetching lexicon:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/lexicon - Add new lexicon entry
+app.post('/api/lexicon', (req, res) => {
+  try {
+    const { kind, trigger, replacement, score, notes } = req.body;
+
+    // Validate required fields
+    if (!kind || !trigger || !replacement) {
+      return res.status(400).json({ error: 'kind, trigger, and replacement are required' });
+    }
+
+    // Validate kind
+    const validKinds = ['synonym', 'replace', 'regex', 'unit', 'category'];
+    if (!validKinds.includes(kind)) {
+      return res.status(400).json({ error: `kind must be one of: ${validKinds.join(', ')}` });
+    }
+
+    // Create new entry
+    const newEntry = {
+      kind,
+      trigger: trigger.toLowerCase(),
+      replacement: replacement.toLowerCase(),
+      score: score || 1.0,
+      notes: notes || '',
+      created_at: new Date().toISOString()
+    };
+
+    // Check if trigger already exists
+    const existingIndex = lexiconCache.findIndex(entry =>
+      entry.kind === kind && entry.trigger === newEntry.trigger
+    );
+
+    if (existingIndex >= 0) {
+      // Update existing entry
+      lexiconCache[existingIndex] = { ...lexiconCache[existingIndex], ...newEntry };
+      console.log(`✓ Updated lexicon entry: ${trigger} → ${replacement} (${kind})`);
+    } else {
+      // Add new entry
+      lexiconCache.push(newEntry);
+      console.log(`✓ Added lexicon entry: ${trigger} → ${replacement} (${kind})`);
+    }
+
+    // Save to file
+    saveLexicon();
+
+    res.json({
+      success: true,
+      entry: newEntry,
+      lastUpdated: lexiconLastUpdated
+    });
+
+  } catch (error) {
+    console.error('Error adding lexicon entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/lexicon/:kind/:trigger - Remove lexicon entry
+app.delete('/api/lexicon/:kind/:trigger', (req, res) => {
+  try {
+    const { kind, trigger } = req.params;
+
+    const initialLength = lexiconCache.length;
+    lexiconCache = lexiconCache.filter(entry =>
+      !(entry.kind === kind && entry.trigger === trigger.toLowerCase())
+    );
+
+    if (lexiconCache.length < initialLength) {
+      saveLexicon();
+      console.log(`✓ Deleted lexicon entry: ${trigger} (${kind})`);
+      res.json({
+        success: true,
+        deleted: { kind, trigger },
+        lastUpdated: lexiconLastUpdated
+      });
+    } else {
+      res.status(404).json({ error: 'Entry not found' });
+    }
+
+  } catch (error) {
+    console.error('Error deleting lexicon entry:', error);
     res.status(500).json({ error: error.message });
   }
 });
