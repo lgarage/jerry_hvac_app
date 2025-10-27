@@ -14,6 +14,10 @@ let isModalRecording = false;
 let currentPartToAdd = '';
 let modalFieldHistory = {}; // Track previous field values for undo
 
+// Detected-parts queue for multi-part utterances
+let pendingPartsQueue = []; // Array of {quantity, name, category, type?, clarify?}
+let pendingPartIndex = 0;    // Current item index in queue
+
 // Conversational command state
 let conversationState = null; // Tracks multi-step voice commands
 // Format: { type: 'add_part' | 'add_term', data: {}, nextField: 'name', rawCommand: '' }
@@ -432,6 +436,309 @@ function extractPartNumber(text) {
   }
 
   return null;
+}
+
+// ========== MULTI-PART PARSING FUNCTIONS ==========
+
+/**
+ * Infer category from part name keywords
+ */
+function inferCategoryFromName(name) {
+  if (!name) return null;
+
+  const nameLower = name.toLowerCase();
+  const categoryKeywords = {
+    'Electrical': ['fuse', 'breaker', 'battery', 'wire', 'conductor', 'contactor', 'relay'],
+    'Filters': ['filter', 'pleated'],
+    'Mechanical': ['belt', 'bearing', 'valve', 'actuator', 'pulley', 'coupling'],
+    'Controls': ['thermostat', 'sensor', 'controller', 'switch'],
+    'Refrigeration': ['refrigerant', 'compressor', 'evaporator', 'condenser']
+  };
+
+  for (const [category, keywords] of Object.entries(categoryKeywords)) {
+    if (keywords.some(keyword => nameLower.includes(keyword))) {
+      return category;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Detect if transcription contains multiple distinct parts
+ */
+function detectMultipleParts(transcription) {
+  const text = transcription.toLowerCase();
+
+  // Look for "and" that separates parts (not dimensions or fractions)
+  const segments = [];
+
+  // Split on "and" but be careful
+  const andSplit = transcription.split(/\s+and\s+/i);
+
+  if (andSplit.length === 1) {
+    return { isMultiple: false, segments: [transcription] };
+  }
+
+  // Check each segment to see if it looks like a part description
+  for (let i = 0; i < andSplit.length; i++) {
+    const segment = andSplit[i].trim();
+
+    // Skip if this looks like a fraction context ("one and a half")
+    if (i > 0 && /^(a\s+)?(half|quarter|third)/i.test(segment)) {
+      // Merge with previous
+      if (segments.length > 0) {
+        segments[segments.length - 1] += ' and ' + segment;
+      }
+      continue;
+    }
+
+    // Skip if this looks like dimensional continuation ("by 24 and 2")
+    if (i > 0 && /^\d+\s*$/i.test(segment) && /\d+\s*(x|by)\s*\d+$/i.test(andSplit[i-1])) {
+      // Merge with previous (dimensions like "24 by 24 and 2")
+      if (segments.length > 0) {
+        segments[segments.length - 1] += ' and ' + segment;
+      }
+      continue;
+    }
+
+    // Check if segment has a part-like structure (quantity + noun or technical noun)
+    const hasQuantity = /^\d+|^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|pair|pack)/i.test(segment);
+    const hasNoun = /\b(fuse|filter|battery|batteries|valve|belt|sensor|thermostat|wire|breaker|actuator)\b/i.test(segment);
+
+    if (hasQuantity || hasNoun || segment.length > 5) {
+      segments.push(segment);
+    }
+  }
+
+  return {
+    isMultiple: segments.length > 1,
+    segments: segments.length > 0 ? segments : [transcription]
+  };
+}
+
+/**
+ * Parse a single part phrase segment
+ */
+function parsePartPhrase(segment) {
+  const result = {
+    quantity: null,
+    name: null,
+    category: null,
+    type: null,
+    clarify: null
+  };
+
+  let remainingText = segment.trim();
+
+  // Extract quantity
+  const qtyExtract = extractLeadingQuantity(remainingText);
+  if (qtyExtract) {
+    result.quantity = qtyExtract.quantity;
+    remainingText = qtyExtract.remaining;
+  }
+
+  // Clean up name
+  let cleanedName = remainingText
+    .replace(/^(pack|packs|of|pair|pairs|dozen|dozens)\s+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Battery token detection
+  const batteryTokens = ['AA', 'AAA', 'C', 'D', '9V', 'CR2032'];
+  const foundTokens = [];
+  const lowerText = segment.toLowerCase();
+
+  for (const token of batteryTokens) {
+    const tokenLower = token.toLowerCase();
+    if (lowerText.includes(tokenLower) ||
+        (token === 'AAA' && (lowerText.includes('triple a') || lowerText.includes('triple-a'))) ||
+        (token === 'AA' && (lowerText.includes('double a') || lowerText.includes('double-a')))) {
+      foundTokens.push(token);
+    }
+  }
+
+  // Handle battery ambiguity
+  if (foundTokens.length > 1) {
+    result.clarify = `Did you mean "${foundTokens[0]} battery" or "${foundTokens[1]} battery"?`;
+    result.name = 'battery'; // Placeholder
+  } else if (foundTokens.length === 1) {
+    // Normalize battery name
+    if (!cleanedName.toLowerCase().includes('batter')) {
+      cleanedName = `${foundTokens[0]} battery`;
+    } else {
+      cleanedName = cleanedName.replace(/batter(y|ies)/i, `${foundTokens[0]} battery`);
+    }
+  } else if (/batter(y|ies)/i.test(cleanedName) && !foundTokens.length) {
+    result.clarify = 'Which battery size? (AA, AAA, C, D, 9V, CR2032)';
+    result.name = 'battery'; // Placeholder
+  }
+
+  // Normalize plural to singular
+  if (!result.clarify && cleanedName) {
+    cleanedName = cleanedName
+      .replace(/filters$/i, 'filter')
+      .replace(/fuses$/i, 'fuse')
+      .replace(/batteries$/i, 'battery')
+      .replace(/valves$/i, 'valve')
+      .replace(/sensors$/i, 'sensor')
+      .replace(/belts$/i, 'belt');
+  }
+
+  result.name = cleanedName;
+
+  // Infer category
+  result.category = inferCategoryFromName(result.name);
+
+  // Default type
+  result.type = result.category === 'Filters' ? 'Consumable' : 'Inventory';
+
+  return result;
+}
+
+/**
+ * Parse multiple parts from transcription
+ */
+function parseMultipleParts(transcription) {
+  const detection = detectMultipleParts(transcription);
+
+  const parts = [];
+  for (const segment of detection.segments) {
+    const parsed = parsePartPhrase(segment);
+    parts.push(parsed);
+  }
+
+  return parts;
+}
+
+/**
+ * Render detected parts list for transcript drawer
+ */
+function renderDetectedList(parts) {
+  if (!parts || parts.length === 0) return '';
+
+  let output = 'Detected parts:\n\n';
+  parts.forEach((part, i) => {
+    const qty = part.quantity || '?';
+    const name = part.name || 'unknown';
+    const cat = part.category || 'Other';
+    output += `${i + 1}. ${qty} × ${name} (${cat})`;
+    if (part.clarify) {
+      output += ` [needs clarification]`;
+    }
+    output += '\n';
+  });
+  return output;
+}
+
+/**
+ * Render short format for pill display
+ */
+function renderShort(part) {
+  if (!part) return '';
+  const qty = part.quantity || 1;
+  const name = part.name || 'part';
+  return `${qty} × ${name}`;
+}
+
+// ========== QUEUE MANAGEMENT FUNCTIONS ==========
+
+/**
+ * Load current queued part into modal form
+ */
+function loadQueuedPartIntoModal() {
+  if (pendingPartIndex >= pendingPartsQueue.length) {
+    showCompactPill('✓ All parts processed', '', { showView: false });
+    setTimeout(() => hideCompactPill(), 3000);
+    pendingPartsQueue = [];
+    pendingPartIndex = 0;
+    return;
+  }
+
+  const part = pendingPartsQueue[pendingPartIndex];
+
+  console.log(`[Queue] Loading part ${pendingPartIndex + 1}/${pendingPartsQueue.length}:`, part);
+
+  // If this part needs clarification, show it and wait
+  if (part.clarify) {
+    const clarifyMsg = part.clarify;
+    const buttons = [];
+
+    // Add clarification choice buttons if it's a battery question
+    if (clarifyMsg.includes('AA') || clarifyMsg.includes('AAA')) {
+      showCompactPill('❓ Need clarification', clarifyMsg, {
+        showView: true,
+        clarificationChoices: ['AA', 'AAA', 'C', 'D', '9V', 'CR2032']
+      });
+    } else {
+      showCompactPill('❓ Need clarification', clarifyMsg, { showView: true });
+    }
+    return;
+  }
+
+  // Fill form with part data
+  document.getElementById('partName').value = part.name || '';
+  document.getElementById('partQuantity').value = part.quantity || 1;
+  document.getElementById('partCategory').value = part.category || '';
+  document.getElementById('partType').value = part.type || 'Inventory';
+
+  // Don't touch price, description, common uses - those are for follow-up recordings
+
+  // Show progress in pill
+  const remaining = pendingPartsQueue.length - pendingPartIndex - 1;
+  if (remaining > 0) {
+    showCompactPill(
+      `Part ${pendingPartIndex + 1}/${pendingPartsQueue.length}`,
+      `Loaded: ${renderShort(part)}`,
+      { showView: true, showNext: true, showSkip: true }
+    );
+  } else {
+    showCompactPill(
+      `Part ${pendingPartIndex + 1}/${pendingPartsQueue.length} (last)`,
+      `Loaded: ${renderShort(part)}`,
+      { showView: true }
+    );
+  }
+}
+
+/**
+ * Advance to next part in queue
+ */
+function handleNextPart() {
+  console.log('[Queue] Next clicked');
+  pendingPartIndex++;
+  loadQueuedPartIntoModal();
+}
+
+/**
+ * Skip current part
+ */
+function handleSkipPart() {
+  console.log('[Queue] Skip clicked');
+  pendingPartIndex++;
+  loadQueuedPartIntoModal();
+}
+
+/**
+ * Handle clarification choice (e.g., selecting "AA" for battery)
+ */
+function handleClarificationChoice(choice) {
+  console.log('[Queue] Clarification choice:', choice);
+
+  if (pendingPartIndex >= pendingPartsQueue.length) return;
+
+  const part = pendingPartsQueue[pendingPartIndex];
+
+  // Resolve the ambiguity
+  if (part.clarify && part.clarify.includes('battery')) {
+    part.name = `${choice} battery`;
+    part.category = 'Electrical';
+    part.type = 'Consumable';
+    delete part.clarify;
+
+    // Now load it
+    loadQueuedPartIntoModal();
+  }
 }
 
 /**
@@ -2867,35 +3174,23 @@ async function processModalAudio(audioBlob) {
     // Update pill with transcript snippet and View button
     showCompactPill('🤖 Parsing...', transcription, { showView: true });
 
-    // Update transcript drawer
-    showTranscriptDrawer(transcription);
+    // Step 2: Detect and parse multiple parts
+    const detectedParts = parseMultipleParts(transcription);
 
-    // Step 2: Get current form values (for incremental merge)
-    const currentFields = {
-      name: document.getElementById('partName').value.trim(),
-      partNumber: document.getElementById('partNumber').value.trim(),
-      category: document.getElementById('partCategory').value,
-      type: document.getElementById('partType').value,
-      quantity: parseInt(document.getElementById('partQuantity').value) || null,
-      price: parseFloat(document.getElementById('partPrice').value) || null,
-      description: document.getElementById('partDescription').value.trim(),
-      commonUses: document.getElementById('partCommonUses').value.trim()
-    };
+    console.log('[Multi-Part] Detected parts:', detectedParts);
 
-    // Step 3: Client-side parsing
-    const parsedData = parseSpokenPart(transcription, currentFields);
+    // Update transcript drawer with detected parts list
+    showTranscriptDrawer(transcription + '\n\n' + renderDetectedList(detectedParts));
 
-    console.log('Client-parsed data:', parsedData);
-    console.log('Changed fields:', parsedData.changedFields);
+    // If multiple parts detected or single part, queue them
+    pendingPartsQueue = detectedParts;
+    pendingPartIndex = 0;
 
-    // Step 3.5: Handle clarification requests
-    if (parsedData.clarify) {
-      console.log('Clarification needed:', parsedData.clarify);
-      showCompactPill('❓ Need clarification', parsedData.clarify, { showView: true });
-      // Don't fill ambiguous fields - wait for user to provide more info
-      setTimeout(() => hideCompactPill(), 6000); // Keep visible longer for reading
-      return;
-    }
+    console.log('[Multi-Part] Queue initialized with', pendingPartsQueue.length, 'part(s)');
+
+    // Load first part into modal
+    loadQueuedPartIntoModal();
+    return; // Skip old single-part flow
 
     // Check for reset command
     if (parsedData.resetCommand) {
@@ -3146,6 +3441,45 @@ function showCompactPill(statusText, transcript = '', options = {}) {
       }
     } else {
       undoBtn.classList.add('hidden');
+    }
+  }
+
+  // Dynamic buttons: Next, Skip, Clarification choices
+  const pillContent = pill.querySelector('.pill-content');
+  if (pillContent) {
+    // Remove any existing dynamic buttons
+    pillContent.querySelectorAll('.pill-dynamic-btn').forEach(btn => btn.remove());
+
+    // Add Next button
+    if (options.showNext) {
+      const nextBtn = document.createElement('button');
+      nextBtn.type = 'button';
+      nextBtn.className = 'pill-view-btn pill-dynamic-btn';
+      nextBtn.textContent = 'Next';
+      nextBtn.onclick = () => handleNextPart();
+      pillContent.appendChild(nextBtn);
+    }
+
+    // Add Skip button
+    if (options.showSkip) {
+      const skipBtn = document.createElement('button');
+      skipBtn.type = 'button';
+      skipBtn.className = 'pill-view-btn pill-dynamic-btn';
+      skipBtn.textContent = 'Skip';
+      skipBtn.onclick = () => handleSkipPart();
+      pillContent.appendChild(skipBtn);
+    }
+
+    // Add clarification choice buttons
+    if (options.clarificationChoices && Array.isArray(options.clarificationChoices)) {
+      options.clarificationChoices.forEach(choice => {
+        const choiceBtn = document.createElement('button');
+        choiceBtn.type = 'button';
+        choiceBtn.className = 'pill-view-btn pill-dynamic-btn';
+        choiceBtn.textContent = choice;
+        choiceBtn.onclick = () => handleClarificationChoice(choice);
+        pillContent.appendChild(choiceBtn);
+      });
     }
   }
 
