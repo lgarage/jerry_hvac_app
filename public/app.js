@@ -641,6 +641,97 @@ function renderShort(part) {
   return `${qty} × ${name}`;
 }
 
+// ========== DB LOOKUP NORMALIZATION HELPERS ==========
+
+/**
+ * Normalize a part name for DB lookup (qty-free, lowercase, singularized)
+ * @param {string} rawName - Raw part name (may include quantity tokens)
+ * @returns {string} Normalized name for lookup
+ */
+function normalizeNameForLookup(rawName) {
+  if (!rawName || typeof rawName !== 'string') return '';
+
+  let normalized = rawName.toLowerCase().trim();
+
+  // Collapse multiple spaces
+  normalized = normalized.replace(/\s+/g, ' ');
+
+  // Remove leading quantity tokens (defensive - should already be removed)
+  // Match patterns like: "4 ", "12 ", "pack of ", "6-pack ", etc.
+  normalized = normalized.replace(/^\d+\s+/, ''); // "4 fuses" → "fuses"
+  normalized = normalized.replace(/^\d+-pack\s+/, ''); // "12-pack batteries" → "batteries"
+  normalized = normalized.replace(/^pack\s+of\s+\d+\s+/, ''); // "pack of 6 filters" → "filters"
+
+  // Singularize common plurals
+  const pluralMap = {
+    'filters': 'filter',
+    'fuses': 'fuse',
+    'batteries': 'battery',
+    'breakers': 'breaker',
+    'capacitors': 'capacitor',
+    'contactors': 'contactor',
+    'thermostats': 'thermostat',
+    'sensors': 'sensor',
+    'valves': 'valve',
+    'belts': 'belt',
+    'bearings': 'bearing',
+    'motors': 'motor',
+    'compressors': 'compressor',
+    'coils': 'coil',
+    'fans': 'fan'
+  };
+
+  // Replace plural with singular if exact match
+  Object.keys(pluralMap).forEach(plural => {
+    const singular = pluralMap[plural];
+    // Use word boundary to avoid partial replacements
+    const regex = new RegExp(`\\b${plural}\\b`, 'gi');
+    normalized = normalized.replace(regex, singular);
+  });
+
+  return normalized.trim();
+}
+
+/**
+ * Create a DB lookup key from part info
+ * @param {Object} partInfo - {name: string, partNumber?: string}
+ * @returns {string} Lookup key for DB matching
+ */
+function makeDbLookupKey({ name, partNumber }) {
+  const normalizedName = normalizeNameForLookup(name || '');
+  if (partNumber && partNumber.trim()) {
+    return `${normalizedName}|${partNumber.trim()}`;
+  }
+  return normalizedName;
+}
+
+/**
+ * Convert a string part (possibly with quantity) into a chip object
+ * @param {string} partString - Raw part string (e.g., "4 600V 30A fuses")
+ * @returns {Object} Chip object {name, quantity, lookupKey, text}
+ */
+function stringToChip(partString) {
+  if (!partString || typeof partString !== 'string') {
+    return { name: '', quantity: 1, lookupKey: '', text: partString };
+  }
+
+  const text = partString.trim();
+
+  // Parse using existing parsePartPhrase logic
+  const parsed = parsePartPhrase(text);
+
+  const chip = {
+    name: parsed.name || text,
+    quantity: parsed.quantity || 1,
+    lookupKey: normalizeNameForLookup(parsed.name || text),
+    text: text // Original utterance
+  };
+
+  console.log('[Chip] Converted:', { input: text, chip });
+
+  return chip;
+}
+
 // ========== QUEUE MANAGEMENT FUNCTIONS ==========
 
 /**
@@ -1629,11 +1720,26 @@ function displayResults(result) {
 
   if (result.repairs && result.repairs.length > 0) {
     // Store raw transcription with each repair for context
-    const repairsWithContext = result.repairs.map(repair => ({
-      ...repair,
-      raw_transcription: result.raw_transcription,
-      normalized_transcription: result.transcription
-    }));
+    const repairsWithContext = result.repairs.map(repair => {
+      // Convert string parts to chip objects
+      let partsChips = repair.parts || [];
+      if (Array.isArray(partsChips)) {
+        partsChips = partsChips.map(part => {
+          // If already an object, keep it; otherwise convert string to chip
+          if (typeof part === 'string') {
+            return stringToChip(part);
+          }
+          return part;
+        });
+      }
+
+      return {
+        ...repair,
+        parts: partsChips,
+        raw_transcription: result.raw_transcription,
+        normalized_transcription: result.transcription
+      };
+    });
 
     // APPEND new repairs to existing ones instead of replacing
     currentRepairs.push(...repairsWithContext);
@@ -2457,15 +2563,24 @@ async function renderRepairs() {
 }
 
 async function checkPartsInDatabase() {
-  // Collect all unique parts from all repairs
-  const allParts = new Set();
+  // Collect all unique lookupKeys from all repairs
+  const allLookupKeys = new Set();
   currentRepairs.forEach(repair => {
     if (repair.parts && repair.parts.length > 0) {
-      repair.parts.forEach(part => allParts.add(part));
+      repair.parts.forEach(part => {
+        // Handle both old string format and new chip object format
+        if (typeof part === 'string') {
+          // Convert to chip first
+          const chip = stringToChip(part);
+          allLookupKeys.add(chip.lookupKey);
+        } else if (part && part.lookupKey) {
+          allLookupKeys.add(part.lookupKey);
+        }
+      });
     }
   });
 
-  if (allParts.size === 0) return;
+  if (allLookupKeys.size === 0) return;
 
   try {
     const response = await fetch('/api/parts/check', {
@@ -2473,13 +2588,14 @@ async function checkPartsInDatabase() {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ parts: Array.from(allParts) })
+      body: JSON.stringify({ parts: Array.from(allLookupKeys) })
     });
 
     if (response.ok) {
       const data = await response.json();
       partsStatus = {};
       data.results.forEach(result => {
+        // Store by lookupKey (normalized) instead of raw string
         partsStatus[result.part] = result.exists;
       });
     }
@@ -2547,19 +2663,31 @@ function createRepairCard(repair, index) {
     const partsList = document.createElement('div');
     partsList.className = 'list-items';
     repair.parts.forEach(part => {
+      // Handle both old string format and new chip object format
+      let chip;
+      if (typeof part === 'string') {
+        chip = stringToChip(part);
+      } else {
+        chip = part;
+      }
+
       const partWrapper = document.createElement('div');
       partWrapper.className = 'part-item-wrapper';
 
       const partItem = document.createElement('span');
       partItem.className = 'list-item';
 
-      // Check if part is in database
-      const isInDatabase = partsStatus[part];
+      // Check if part is in database using lookupKey
+      const isInDatabase = partsStatus[chip.lookupKey];
       if (isInDatabase === false) {
         partItem.classList.add('part-not-in-database');
       }
 
-      partItem.textContent = part;
+      // Display with quantity (e.g., "4 × 600V 30A fuse")
+      const displayText = chip.quantity > 1
+        ? `${chip.quantity} × ${chip.name}`
+        : chip.name;
+      partItem.textContent = displayText;
       partWrapper.appendChild(partItem);
 
       // Add "Not in DB" badge and button if part is not in database
@@ -2574,7 +2702,7 @@ function createRepairCard(repair, index) {
         addBtn.textContent = '+ Add';
         addBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          openAddPartModal(part);
+          openAddPartModal(chip);
         });
         partWrapper.appendChild(addBtn);
       }
@@ -2788,7 +2916,14 @@ function editRepair(index) {
   const problem = prompt('Problem:', repair.problem || '');
   if (problem === null) return;
 
-  const partsStr = prompt('Parts (comma-separated):', (repair.parts || []).join(', '));
+  // Convert chips to display text for editing
+  const partsDisplayText = (repair.parts || []).map(part => {
+    if (typeof part === 'string') return part;
+    // For chip objects, show "qty × name"
+    return part.quantity > 1 ? `${part.quantity} × ${part.name}` : part.name;
+  }).join(', ');
+
+  const partsStr = prompt('Parts (comma-separated):', partsDisplayText);
   if (partsStr === null) return;
 
   const actionsStr = prompt('Actions (comma-separated):', (repair.actions || []).join(', '));
@@ -2797,11 +2932,11 @@ function editRepair(index) {
   const notes = prompt('Notes:', repair.notes || '');
   if (notes === null) return;
 
-  // Update the repair
+  // Update the repair - convert string parts to chips
   currentRepairs[index] = {
     equipment: equipment.trim(),
     problem: problem.trim(),
-    parts: partsStr.split(',').map(p => p.trim()).filter(p => p),
+    parts: partsStr.split(',').map(p => p.trim()).filter(p => p).map(p => stringToChip(p)),
     actions: actionsStr.split(',').map(a => a.trim()).filter(a => a),
     notes: notes.trim()
   };
@@ -2838,7 +2973,7 @@ function addNewRepair() {
   const newRepair = {
     equipment: equipment.trim(),
     problem: problem.trim(),
-    parts: partsStr.split(',').map(p => p.trim()).filter(p => p),
+    parts: partsStr.split(',').map(p => p.trim()).filter(p => p).map(p => stringToChip(p)),
     actions: actionsStr.split(',').map(a => a.trim()).filter(a => a),
     notes: notes.trim()
   };
@@ -3015,12 +3150,26 @@ function removePartFromRepair(repairIndex, partNumber) {
 
 // ========== ADD PART MODAL FUNCTIONS ==========
 
-function openAddPartModal(partName) {
-  currentPartToAdd = partName;
+function openAddPartModal(partOrChip) {
+  // Handle both old string format and new chip object format
+  let chip;
+  if (typeof partOrChip === 'string') {
+    chip = stringToChip(partOrChip);
+  } else {
+    chip = partOrChip;
+  }
+
+  // Store the chip for reference
+  currentPartToAdd = chip.name;
+
+  // Prefill from chip fields (not reparse text)
   const partNameInput = document.getElementById('partName');
   if (partNameInput) {
-    partNameInput.value = partName;
+    partNameInput.value = chip.name || '';
   }
+
+  // Prefill quantity from chip
+  document.getElementById('partQuantity').value = chip.quantity || 1;
 
   const addPartModal = document.getElementById('addPartModal');
   if (addPartModal) {
@@ -3031,7 +3180,7 @@ function openAddPartModal(partName) {
   const floatingMicLabel = document.getElementById('floatingMicLabel');
   const floatingMicLabelText = document.getElementById('floatingMicLabelText');
   if (floatingMicLabel && floatingMicLabelText) {
-    floatingMicLabelText.textContent = `🎙️ Recording Part Details for "${partName}"`;
+    floatingMicLabelText.textContent = `🎙️ Recording Part Details for "${chip.name}"`;
     floatingMicLabel.classList.remove('hidden');
   }
 
@@ -3039,7 +3188,6 @@ function openAddPartModal(partName) {
   document.getElementById('partNumber').value = '';
   document.getElementById('partCategory').value = '';
   document.getElementById('partType').value = '';
-  document.getElementById('partQuantity').value = '1'; // Reset to default quantity
   document.getElementById('partPrice').value = '';
   document.getElementById('partDescription').value = '';
   document.getElementById('partCommonUses').value = '';
