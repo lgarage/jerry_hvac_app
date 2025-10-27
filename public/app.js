@@ -2756,88 +2756,196 @@ async function processModalAudio(audioBlob) {
     const wavBlob = await audioBufferToWav(audioBuffer);
     const base64Audio = await blobToBase64(wavBlob);
 
-    // Send to backend to parse part details
-    showModalAiStatus('🤖 AI is analyzing...', 'Extracting part details from your description');
+    // Step 1: Get transcription from Whisper
+    showCompactPill('⏳ Transcribing...', '');
 
-    const response = await fetch('/api/parts/parse-details', {
+    const transcribeResponse = await fetch('/api/parts/parse-details', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         audio: base64Audio,
         partName: currentPartToAdd
       })
     });
 
-    if (!response.ok) {
-      throw new Error('Failed to parse part details');
+    if (!transcribeResponse.ok) {
+      throw new Error('Failed to transcribe audio');
     }
 
-    const result = await response.json();
+    const transcribeResult = await transcribeResponse.json();
+    const transcription = String(transcribeResult.transcription || '');
 
-    console.log('Parse details result:', result); // Debug log
+    console.log('Transcription:', transcription);
 
-    // Show raw transcription
-    if (result.transcription) {
-      const transcriptionSection = document.getElementById('modalTranscription');
-      const transcriptionText = document.getElementById('modalTranscriptionText');
-      const toggleBtn = document.getElementById('toggleTranscription');
+    // Update pill with transcript snippet and View button
+    showCompactPill('🤖 Parsing...', transcription, { showView: true });
 
-      if (transcriptionSection && transcriptionText) {
-        // Convert to string explicitly
-        const transcriptionString = String(result.transcription);
-        transcriptionText.textContent = transcriptionString;
-        transcriptionText.classList.remove('hidden');
-        transcriptionSection.classList.remove('hidden');
-        if (toggleBtn) {
-          toggleBtn.textContent = 'Hide';
+    // Update transcript drawer
+    showTranscriptDrawer(transcription);
+
+    // Step 2: Get current form values (for incremental merge)
+    const currentFields = {
+      name: document.getElementById('partName').value.trim(),
+      partNumber: document.getElementById('partNumber').value.trim(),
+      category: document.getElementById('partCategory').value,
+      type: document.getElementById('partType').value,
+      quantity: parseInt(document.getElementById('partQuantity').value) || null,
+      price: parseFloat(document.getElementById('partPrice').value) || null,
+      description: document.getElementById('partDescription').value.trim(),
+      commonUses: document.getElementById('partCommonUses').value.trim()
+    };
+
+    // Step 3: Client-side parsing
+    const parsedData = parseSpokenPart(transcription, currentFields);
+
+    console.log('Client-parsed data:', parsedData);
+    console.log('Changed fields:', parsedData.changedFields);
+
+    // Check for reset command
+    if (parsedData.resetCommand) {
+      showCompactPill('🔄 Resetting fields...', '');
+      document.getElementById('partName').value = currentPartToAdd;
+      document.getElementById('partNumber').value = '';
+      document.getElementById('partCategory').value = '';
+      document.getElementById('partType').value = '';
+      document.getElementById('partQuantity').value = '1';
+      document.getElementById('partPrice').value = '';
+      document.getElementById('partDescription').value = '';
+      document.getElementById('partCommonUses').value = '';
+
+      setTimeout(() => {
+        showCompactPill('✓ Fields reset', '');
+        setTimeout(() => hideCompactPill(), 2000);
+      }, 500);
+      return;
+    }
+
+    // Step 4: Calculate confidence
+    const confidence = calculateParseConfidence(parsedData);
+    console.log('Parse confidence:', confidence);
+
+    // Step 5: Decide if we need GPT-4 validation
+    const needsValidation = PARSER_CONFIG.useServerValidation &&
+                           (confidence < PARSER_CONFIG.confidenceThreshold || parsedData.errors.length > 0);
+
+    let finalData = parsedData;
+
+    if (needsValidation) {
+      console.log('Low confidence or errors - requesting GPT-4 validation');
+      showCompactPill('🤖 AI validating...', transcription, { showView: true });
+
+      // Send client-parsed data to server for GPT-4 enhancement
+      const validateResponse = await fetch('/api/parts/parse-details', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: transcription,
+          partName: currentPartToAdd,
+          clientParsed: parsedData,
+          currentFields: currentFields
+        })
+      });
+
+      if (validateResponse.ok) {
+        const validateResult = await validateResponse.json();
+        if (validateResult.partDetails) {
+          // Merge server validation with client parsing
+          finalData = { ...parsedData, ...validateResult.partDetails };
+          console.log('GPT-4 enhanced data:', finalData);
         }
       }
     }
 
-    // Fill form with extracted details
-    if (result.partDetails) {
-      showModalAiStatus('✨ Populating fields...', 'AI is filling in the form');
-
-      // Animate the field population with slight delays
-      setTimeout(() => {
-        document.getElementById('partName').value = result.partDetails.name || currentPartToAdd;
-      }, 100);
-      setTimeout(() => {
-        document.getElementById('partNumber').value = result.partDetails.part_number || '';
-      }, 200);
-      setTimeout(() => {
-        document.getElementById('partCategory').value = result.partDetails.category || '';
-      }, 300);
-      setTimeout(() => {
-        document.getElementById('partType').value = result.partDetails.type || '';
-      }, 400);
-      setTimeout(() => {
-        document.getElementById('partPrice').value = result.partDetails.price || '';
-      }, 500);
-      setTimeout(() => {
-        document.getElementById('partDescription').value = result.partDetails.description || '';
-      }, 600);
-      setTimeout(() => {
-        document.getElementById('partCommonUses').value = result.partDetails.common_uses || '';
-      }, 700);
-
-      // Show success and hide after delay
-      setTimeout(() => {
-        showModalAiStatus('✓ Details extracted!', 'Review the information below', true);
-        setTimeout(() => {
-          hideModalAiStatus();
-        }, 3000);
-      }, 800);
+    // Step 6: Show errors if any
+    if (parsedData.errors.length > 0) {
+      console.warn('Parse errors:', parsedData.errors);
+      showCompactPill('⚠️ Warning', parsedData.errors[0], { showView: true });
+      // Continue anyway - user can fix manually
     }
+
+    // Step 7: Incremental field updates with animation and tracking
+    showCompactPill('✨ Updating fields...', transcription, { showView: true });
+
+    const fieldMappings = {
+      'partName': { value: finalData.name, displayName: 'Name' },
+      'partNumber': { value: finalData.partNumber, displayName: 'Part Number' },
+      'partCategory': { value: finalData.category, displayName: 'Category' },
+      'partType': { value: finalData.type, displayName: 'Type' },
+      'partQuantity': { value: finalData.quantity, displayName: 'Quantity' },
+      'partPrice': { value: finalData.price, displayName: 'Price' },
+      'partDescription': { value: finalData.description, displayName: 'Description' },
+      'partCommonUses': { value: finalData.commonUses, displayName: 'Common Uses' }
+    };
+
+    let firstChangedField = null;
+    const updatedFields = [];
+
+    // Update fields with delay for visual effect
+    let delay = 100;
+    for (const [fieldId, fieldData] of Object.entries(fieldMappings)) {
+      if (fieldData.value !== null && fieldData.value !== undefined && fieldData.value !== '') {
+        const currentValue = currentFields[fieldId.replace('part', '').toLowerCase()] ||
+                            currentFields[fieldId.replace('part', '').replace(/([A-Z])/g, '$1').toLowerCase()];
+
+        // Only update if value changed
+        if (String(fieldData.value) !== String(currentValue)) {
+          setTimeout(() => {
+            const fieldElement = document.getElementById(fieldId);
+            if (fieldElement) {
+              // Save to history for undo
+              if (!modalFieldHistory[fieldId]) {
+                modalFieldHistory[fieldId] = [];
+              }
+              modalFieldHistory[fieldId].push({
+                oldValue: fieldElement.value,
+                newValue: String(fieldData.value),
+                timestamp: Date.now()
+              });
+
+              fieldElement.value = fieldData.value;
+
+              // Visual flash effect
+              fieldElement.style.backgroundColor = '#dbeafe';
+              setTimeout(() => {
+                fieldElement.style.backgroundColor = '';
+              }, 500);
+            }
+          }, delay);
+
+          if (!firstChangedField) {
+            firstChangedField = fieldId;
+          }
+          updatedFields.push(fieldData.displayName);
+          delay += 100;
+        }
+      }
+    }
+
+    // Step 8: Show result and scroll to first changed field
+    setTimeout(() => {
+      if (updatedFields.length > 0) {
+        const summary = updatedFields.join(', ');
+        showCompactPill(`✓ Updated: ${summary}`, transcription, { showView: true });
+
+        // Scroll to first changed field
+        if (firstChangedField) {
+          const fieldElement = document.getElementById(firstChangedField);
+          if (fieldElement) {
+            fieldElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      } else {
+        showCompactPill('ℹ️ No changes detected', transcription, { showView: true });
+      }
+
+      // Auto-hide pill after delay
+      setTimeout(() => hideCompactPill(), 4000);
+    }, delay + 200);
 
   } catch (error) {
     console.error('Error processing modal audio:', error);
-    showModalAiStatus('❌ Error processing audio', 'Please fill in the fields manually', true);
-    setTimeout(() => {
-      hideModalAiStatus();
-    }, 3000);
+    showCompactPill('❌ Error', 'Could not process audio. Please try again.', { showView: false });
+    setTimeout(() => hideCompactPill(), 3000);
   }
 }
 
