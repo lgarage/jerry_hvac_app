@@ -124,13 +124,14 @@ async function addLexiconEntry(kind, trigger, replacement, notes = '') {
  */
 function normalizeTranscript(raw, lexicon = LEXICON_CACHE) {
   if (!raw) return '';
+  if (!lexicon || !lexicon.length) return raw.trim();
 
   let t = ' ' + raw.toLowerCase() + ' ';
 
   console.log('[Normalize] Input:', raw);
 
   // 1) Apply regex rules first (units, number formats)
-  const regexRules = lexicon.filter(e => e.kind === 'regex');
+  const regexRules = lexicon.filter(e => e.kind === 'regex' && e.trigger && e.replacement);
   for (const rule of regexRules) {
     try {
       const regex = new RegExp(rule.trigger, 'gi');
@@ -140,21 +141,39 @@ function normalizeTranscript(raw, lexicon = LEXICON_CACHE) {
         console.log(`[Normalize] Regex: ${rule.trigger} →`, t.trim());
       }
     } catch (error) {
-      console.error(`[Normalize] Invalid regex: ${rule.trigger}`, error);
+      // Silent error for malformed user regex entries
+      // (Don't spam console with user mistakes in lexicon)
     }
   }
 
-  // 2) Apply word/phrase synonyms (replace whole-token matches)
-  const synonymRules = lexicon.filter(e => e.kind === 'synonym' || e.kind === 'replace' || e.kind === 'unit');
+  // 2) Apply word/phrase synonyms (try word-boundary first, then phrase fallback)
+  const synonymRules = lexicon.filter(e =>
+    (e.kind === 'synonym' || e.kind === 'replace' || e.kind === 'unit') &&
+    e.trigger &&
+    e.replacement
+  );
+
   for (const rule of synonymRules) {
     // Escape special regex chars in trigger
     const escapedTrigger = rule.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Match whole word boundaries
-    const regex = new RegExp(`\\b${escapedTrigger}\\b`, 'gi');
-    const before = t;
-    t = t.replace(regex, rule.replacement);
-    if (before !== t) {
-      console.log(`[Normalize] Synonym: "${rule.trigger}" → "${rule.replacement}"`);
+
+    // Try word-boundary match first (more precise)
+    const wordBoundaryRegex = new RegExp(`\\b${escapedTrigger}\\b`, 'gi');
+    const afterWordBoundary = t.replace(wordBoundaryRegex, rule.replacement);
+
+    if (afterWordBoundary !== t) {
+      // Word-boundary match succeeded
+      t = afterWordBoundary;
+      console.log(`[Normalize] Synonym (word): "${rule.trigger}" → "${rule.replacement}"`);
+    } else {
+      // Fallback: phrase match (for multi-word phrases like "double a")
+      const phraseRegex = new RegExp(escapedTrigger, 'gi');
+      const afterPhrase = t.replace(phraseRegex, rule.replacement);
+
+      if (afterPhrase !== t) {
+        t = afterPhrase;
+        console.log(`[Normalize] Synonym (phrase): "${rule.trigger}" → "${rule.replacement}"`);
+      }
     }
   }
 
@@ -550,39 +569,26 @@ function extractPartNumber(text) {
 // ========== MULTI-PART PARSING FUNCTIONS ==========
 
 /**
- * Infer category from part name keywords using lexicon
+ * Infer category from part name keywords using lexicon ONLY
+ * No hardcoded fallbacks - 100% data-driven via lexicon.json
  */
 function inferCategoryFromName(name, lexicon = LEXICON_CACHE) {
   if (!name) return null;
 
   const nameLower = name.toLowerCase();
 
-  // Use lexicon category rules
-  const categoryRules = lexicon.filter(e => e.kind === 'category');
+  // Use lexicon category rules ONLY
+  const categoryRules = lexicon.filter(e => e.kind === 'category' && e.trigger && e.replacement);
 
   // Find first matching rule (could enhance with scoring later)
   for (const rule of categoryRules) {
-    if (nameLower.includes(rule.trigger)) {
+    if (nameLower.includes(rule.trigger.toLowerCase())) {
       console.log(`[Category] Matched "${rule.trigger}" → ${rule.replacement}`);
       return rule.replacement;
     }
   }
 
-  // Fallback to hardcoded keywords if lexicon doesn't have a match
-  const fallbackKeywords = {
-    'Electrical': ['fuse', 'breaker', 'battery', 'wire', 'conductor', 'contactor', 'relay'],
-    'Filters': ['filter', 'pleated'],
-    'Mechanical': ['belt', 'bearing', 'valve', 'actuator', 'pulley', 'coupling'],
-    'Controls': ['thermostat', 'sensor', 'controller', 'switch'],
-    'Refrigeration': ['refrigerant', 'compressor', 'evaporator', 'condenser']
-  };
-
-  for (const [category, keywords] of Object.entries(fallbackKeywords)) {
-    if (keywords.some(keyword => nameLower.includes(keyword))) {
-      return category;
-    }
-  }
-
+  // No match found - return null (no hardcoded fallbacks)
   return null;
 }
 
@@ -1197,6 +1203,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Load lexicon from server
   fetchLexicon();
+
+  // Periodic lexicon refresh (every 5 minutes for hot-reload)
+  setInterval(fetchLexicon, 5 * 60 * 1000);
 });
 
 // Push-to-talk functionality - context-aware
