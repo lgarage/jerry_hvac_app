@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgres://localhost:5432/hvac_db"
+      ],
+      "description": "Direct PostgreSQL database access - query parts, repairs, etc."
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/user/jerry_hvac_app"
+      ],
+      "description": "Enhanced file operations - better file search and editing"
+    }
+  }
+}
