@@ -672,35 +672,32 @@ function parsePartPhrase(segment) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Battery token detection
-  const batteryTokens = ['AA', 'AAA', 'C', 'D', '9V', 'CR2032'];
+  // Battery token detection (using word boundaries to prevent false matches)
+  // Note: lexicon already handles "double a" → "aa battery", "triple a" → "aaa battery"
+  const batteryTokens = ['AAA', 'AA', 'C', 'D', '9V', 'CR2032']; // AAA before AA to match longer first
   const foundTokens = [];
-  const lowerText = segment.toLowerCase();
 
   for (const token of batteryTokens) {
-    const tokenLower = token.toLowerCase();
-    if (lowerText.includes(tokenLower) ||
-        (token === 'AAA' && (lowerText.includes('triple a') || lowerText.includes('triple-a'))) ||
-        (token === 'AA' && (lowerText.includes('double a') || lowerText.includes('double-a')))) {
+    // Use word boundary regex to prevent "AA" matching inside "AAA"
+    const tokenRegex = new RegExp(`\\b${token}\\b`, 'i');
+    if (tokenRegex.test(segment)) {
       foundTokens.push(token);
+      break; // Only match first/longest token (AAA before AA)
     }
   }
 
-  // Handle battery ambiguity
-  if (foundTokens.length > 1) {
-    result.clarify = `Did you mean "${foundTokens[0]} battery" or "${foundTokens[1]} battery"?`;
-    result.name = 'battery'; // Placeholder
-  } else if (foundTokens.length === 1) {
+  // Handle battery detection (NEVER infer - only use explicitly mentioned types)
+  if (foundTokens.length === 1) {
     // Normalize battery name
+    const batteryType = foundTokens[0];
     if (!cleanedName.toLowerCase().includes('batter')) {
-      cleanedName = `${foundTokens[0]} battery`;
+      cleanedName = `${batteryType} battery`;
     } else {
-      cleanedName = cleanedName.replace(/batter(y|ies)/i, `${foundTokens[0]} battery`);
+      cleanedName = cleanedName.replace(/batter(y|ies)/i, `${batteryType} battery`);
     }
-  } else if (/batter(y|ies)/i.test(cleanedName) && !foundTokens.length) {
-    result.clarify = 'Which battery size? (AA, AAA, C, D, 9V, CR2032)';
-    result.name = 'battery'; // Placeholder
   }
+  // REMOVED: Don't ask for clarification if battery type not specified
+  // Just use "battery" as-is and let user specify type in modal
 
   // Normalize plural to singular
   if (!result.clarify && cleanedName) {
@@ -721,6 +718,22 @@ function parsePartPhrase(segment) {
   // Default type
   result.type = result.category === 'Filters' ? 'Consumable' : 'Inventory';
 
+  // Validation logging: warn if part name is too generic or potentially hallucinated
+  if (!result.name || result.name.trim().length === 0) {
+    console.warn('[Parser] Empty part name detected from segment:', segment);
+  } else if (result.name === 'battery' && !batteryTokens.some(t => segment.toLowerCase().includes(t.toLowerCase()))) {
+    console.warn('[Parser] Generic "battery" without type specified:', segment);
+  }
+
+  // Log parsed part for debugging
+  console.log('[Parser] Parsed part:', {
+    input: segment,
+    quantity: result.quantity,
+    name: result.name,
+    category: result.category,
+    hasGenericType: result.name === 'battery'
+  });
+
   return result;
 }
 
@@ -730,11 +743,37 @@ function parsePartPhrase(segment) {
 function parseMultipleParts(transcription) {
   const detection = detectMultipleParts(transcription);
 
+  console.log('[Parser] Multi-part detection:', {
+    isMultiple: detection.isMultiple,
+    segmentCount: detection.segments.length,
+    segments: detection.segments
+  });
+
   const parts = [];
   for (const segment of detection.segments) {
     const parsed = parsePartPhrase(segment);
     parts.push(parsed);
   }
+
+  // Summary validation
+  console.log('[Parser] ✓ Final parsed parts:', parts.map(p => ({
+    qty: p.quantity,
+    name: p.name,
+    category: p.category
+  })));
+
+  // Validation: Check for potential hallucinations
+  const partNames = parts.map(p => p.name.toLowerCase());
+  const originalLower = transcription.toLowerCase();
+
+  parts.forEach(part => {
+    if (part.name && !originalLower.includes(part.name.toLowerCase().split(' ')[0])) {
+      console.warn('[Parser] ⚠️ Potential hallucination - part not in original text:', {
+        detected: part.name,
+        original: transcription
+      });
+    }
+  });
 
   return parts;
 }
