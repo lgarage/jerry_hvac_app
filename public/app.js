@@ -177,6 +177,17 @@ function normalizeTranscript(raw, lexicon = LEXICON_CACHE) {
     }
   }
 
+  // 2.5) De-dupe pass: collapse repeated tokens (fixes "AA AA battery" glitches)
+  // Collapse repeated size tokens like "aa aa battery" -> "aa battery"
+  const sizeRep = '(aa|aaa|c|d|9v|cr2032)';
+  const beforeDedupe = t;
+  t = t.replace(new RegExp(`\\b(${sizeRep})\\s+\\1\\b`, 'gi'), '$1');
+  // Collapse repeated noun too (rare speech glitches): "battery battery" -> "battery"
+  t = t.replace(/\b(battery)\s+\1\b/gi, '$1');
+  if (beforeDedupe !== t) {
+    console.log(`[Normalize] De-dupe: removed repeated tokens →`, t.trim());
+  }
+
   // 3) Cleanup: trim and collapse spaces
   const result = t.trim().replace(/\s+/g, ' ');
 
@@ -289,6 +300,13 @@ function extractLeadingQuantity(text) {
   const cleanRemaining = (str) => {
     return str.replace(/^(of\s+|pack\s+|packs\s+)+/i, '').trim();
   };
+
+  // Skip if the phrase starts with an HVAC filter dimension like "24x24x2" or "20 x 25 x 1"
+  // This prevents treating "24x24x2 pleated filters" as quantity=24
+  const DIM_RX = /^\s*\d{1,3}\s*(x|×|\*)\s*\d{1,3}(\s*(x|×|\*)\s*\d{1,3})?/i;
+  if (DIM_RX.test(text)) {
+    return null; // do not extract a quantity from leading dimension
+  }
 
   // Skip if starts with fraction pattern (e.g., "3/4 ball valve")
   if (/^\d+\/\d+/.test(text)) {
@@ -712,6 +730,25 @@ function parsePartPhrase(segment) {
 
   result.name = cleanedName;
 
+  // Ensure single size token and singular noun (prevents "AA AA battery")
+  const sizeRep = '(aa|aaa|c|d|9v|cr2032)';
+  const sizeRx = /\b(aa|aaa|c|d|9v|cr2032)\b/i;
+  if (sizeRx.test(result.name)) {
+    // Remove any second occurrence of the same size
+    result.name = result.name.replace(new RegExp(`\\b(${sizeRep})\\s+\\1\\b`, 'gi'), '$1');
+  }
+  // Ensure singular: batteries -> battery
+  result.name = result.name.replace(/\bbatteries\b/i, 'battery');
+
+  // Capitalize size for display consistency
+  result.name = result.name
+    .replace(/\baa\b/i, 'AA')
+    .replace(/\baaa\b/i, 'AAA')
+    .replace(/\bc\b/i, 'C')
+    .replace(/\bd\b/i, 'D')
+    .replace(/\b9v\b/i, '9V')
+    .replace(/\bcr2032\b/i, 'CR2032');
+
   // Infer category
   result.category = inferCategoryFromName(result.name);
 
@@ -725,14 +762,8 @@ function parsePartPhrase(segment) {
     console.warn('[Parser] Generic "battery" without type specified:', segment);
   }
 
-  // Log parsed part for debugging
-  console.log('[Parser] Parsed part:', {
-    input: segment,
-    quantity: result.quantity,
-    name: result.name,
-    category: result.category,
-    hasGenericType: result.name === 'battery'
-  });
+  // Log parsed part for debugging (QtyGuard diagnostic)
+  console.debug('[QtyGuard] input=', segment, ' parsedQty=', result.quantity, ' name=', result.name);
 
   return result;
 }
@@ -894,7 +925,14 @@ function stringToChip(partString) {
     text: text // Original utterance
   };
 
-  console.log('[Chip] Converted:', { input: text, chip });
+  // Guard: never let a dimension number override quantity
+  const DIM_RX = /\b\d{1,3}\s*(x|×|\*)\s*\d{1,3}(\s*(x|×|\*)\s*\d{1,3})?\b/i;
+  if (DIM_RX.test(chip.name)) {
+    // Dimension detected in name - quantity stays whatever the parser set or default 1
+    // (quantity should come from leading words like "four 24x24x2 filters", not from "24")
+  }
+
+  console.debug('[Chip]', chip);
 
   return chip;
 }
