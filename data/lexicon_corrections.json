@@ -1,0 +1,29 @@
+[
+  {
+    "field": "quantity",
+    "raw": "2 AA batteries",
+    "normalized": "2 AA battery",
+    "oldValue": "2",
+    "newValue": "4",
+    "timestamp": 1730000000000,
+    "created_at": "2025-10-28T01:15:14.644Z"
+  },
+  {
+    "field": "name",
+    "raw": "24x24x2 plated filter",
+    "normalized": "24x24x2 pleated filter",
+    "oldValue": "plated filter",
+    "newValue": "pleated filter",
+    "timestamp": 1730000001000,
+    "created_at": "2025-10-28T01:15:23.495Z"
+  },
+  {
+    "field": "name",
+    "raw": "20x25 plated filter",
+    "normalized": "20x25 pleated filter",
+    "oldValue": "plated filter",
+    "newValue": "pleated filter",
+    "timestamp": 1730000002000,
+    "created_at": "2025-10-28T01:15:32.254Z"
+  }
+]

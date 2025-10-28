@@ -26,6 +26,10 @@ let conversationState = null; // Tracks multi-step voice commands
 let LEXICON_CACHE = [];
 let LEXICON_LAST_UPDATED = 0;
 
+// Corrections tracking for teaching the system
+let lastRawTranscript = '';
+let lastNormalizedTranscript = '';
+
 // ========== VOICE PARSER CONFIGURATION ==========
 const PARSER_CONFIG = {
   // Hybrid validation settings
@@ -115,6 +119,43 @@ async function addLexiconEntry(kind, trigger, replacement, notes = '') {
   } catch (error) {
     console.error('[Lexicon] Error adding entry:', error);
     throw error;
+  }
+}
+
+/**
+ * Log a user correction for future analysis and auto-suggestions
+ * Fire-and-forget - won't block UI if it fails
+ */
+async function logCorrection(field, oldValue, newValue, raw = '', normalized = '') {
+  // Skip if no actual change
+  if (oldValue === newValue) return;
+
+  try {
+    // Use stored transcripts if not provided
+    const correctionData = {
+      field,
+      oldValue: String(oldValue),
+      newValue: String(newValue),
+      raw: raw || lastRawTranscript,
+      normalized: normalized || lastNormalizedTranscript,
+      timestamp: Date.now()
+    };
+
+    console.log(`📝 Logging correction: ${field} "${oldValue}" → "${newValue}"`);
+
+    // Fire-and-forget POST
+    fetch('/api/lexicon/corrections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(correctionData)
+    }).catch(err => {
+      // Silently fail - don't block the UI
+      console.warn('[Corrections] Failed to log (non-blocking):', err.message);
+    });
+
+  } catch (error) {
+    // Silently fail - corrections are nice-to-have, not critical
+    console.warn('[Corrections] Error logging (non-blocking):', error.message);
   }
 }
 
@@ -3022,7 +3063,14 @@ function createRepairCard(repair, index) {
       minusBtn.style.padding = '0';
       minusBtn.addEventListener('click', () => {
         if (part.quantity > 1) {
+          const oldQty = part.quantity;
           part.quantity -= 1;
+
+          // Log correction if this is an auto-matched part with voice context
+          if (part.auto_matched && part._parsedQuantity !== undefined && part.quantity !== part._parsedQuantity) {
+            logCorrection('quantity', part._parsedQuantity, part.quantity, part.original_text, part.original_text);
+          }
+
           saveRepairsToLocalStorage(); // Persist quantity change
           renderRepairs();
         } else {
@@ -3044,9 +3092,17 @@ function createRepairCard(repair, index) {
       qtyInput.style.padding = '4px';
       qtyInput.style.fontSize = '0.85rem';
       qtyInput.addEventListener('change', (e) => {
+        const oldQty = part.quantity;
         const newQty = parseInt(e.target.value);
+
         if (!isNaN(newQty) && newQty > 0) {
           part.quantity = newQty;
+
+          // Log correction if this is an auto-matched part with voice context
+          if (part.auto_matched && part._parsedQuantity !== undefined && oldQty !== newQty) {
+            logCorrection('quantity', part._parsedQuantity, newQty, part.original_text, part.original_text);
+          }
+
           saveRepairsToLocalStorage(); // Persist quantity change
           renderRepairs();
         } else if (newQty === 0) {
@@ -3074,7 +3130,14 @@ function createRepairCard(repair, index) {
       plusBtn.style.lineHeight = '1';
       plusBtn.style.padding = '0';
       plusBtn.addEventListener('click', () => {
+        const oldQty = part.quantity;
         part.quantity += 1;
+
+        // Log correction if this is an auto-matched part with voice context
+        if (part.auto_matched && part._parsedQuantity !== undefined && part.quantity !== part._parsedQuantity) {
+          logCorrection('quantity', part._parsedQuantity, part.quantity, part.original_text, part.original_text);
+        }
+
         saveRepairsToLocalStorage(); // Persist quantity change
         renderRepairs();
       });

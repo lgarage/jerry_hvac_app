@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Corrections Logging Test</title>
+  <script>
+    // Simplified version of logCorrection for testing
+    async function logCorrection(field, oldValue, newValue, raw = '', normalized = '') {
+      if (oldValue === newValue) return;
+
+      try {
+        const correctionData = {
+          field,
+          oldValue: String(oldValue),
+          newValue: String(newValue),
+          raw: raw || '',
+          normalized: normalized || '',
+          timestamp: Date.now()
+        };
+
+        console.log(`📝 Logging correction: ${field} "${oldValue}" → "${newValue}"`);
+
+        const response = await fetch('http://localhost:3000/api/lexicon/corrections', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(correctionData)
+        });
+
+        const result = await response.json();
+        console.log('✅ Server response:', result);
+        return result;
+
+      } catch (error) {
+        console.warn('❌ Failed to log correction:', error.message);
+      }
+    }
+
+    // Test scenarios
+    async function runTests() {
+      console.log('=== Testing Corrections Logging ===\n');
+
+      // Test 1: Quantity correction
+      console.log('Test 1: Quantity correction (2 → 4)');
+      await logCorrection('quantity', 2, 4, '2 AA batteries', '2 AA battery');
+      await new Promise(r => setTimeout(r, 500));
+
+      // Test 2: Name correction
+      console.log('\nTest 2: Name correction (plated → pleated)');
+      await logCorrection('name', 'plated filter', 'pleated filter', '24x24x2 plated filter', '24x24x2 pleated filter');
+      await new Promise(r => setTimeout(r, 500));
+
+      // Test 3: No-op (should skip)
+      console.log('\nTest 3: No-op correction (should skip)');
+      await logCorrection('name', 'same', 'same');
+      await new Promise(r => setTimeout(r, 500));
+
+      // Test 4: Price correction
+      console.log('\nTest 4: Price correction (10.00 → 12.50)');
+      await logCorrection('price', '10.00', '12.50', '10 dollars', '10 dollar');
+      await new Promise(r => setTimeout(r, 500));
+
+      console.log('\n=== All tests complete! ===');
+      console.log('Check /api/lexicon/corrections to see logged data');
+    }
+
+    window.onload = () => {
+      document.getElementById('runTests').addEventListener('click', runTests);
+    };
+  </script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    button {
+      background: #10b981;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #059669;
+    }
+    .info {
+      background: #f3f4f6;
+      padding: 15px;
+      border-radius: 6px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Corrections Logging Test</h1>
+  <p>This page tests the corrections logging endpoints.</p>
+
+  <button id="runTests">Run Tests</button>
+
+  <div class="info">
+    <h3>Instructions:</h3>
+    <ol>
+      <li>Make sure the server is running (node server.js)</li>
+      <li>Open browser console (F12)</li>
+      <li>Click "Run Tests"</li>
+      <li>Check console output for results</li>
+      <li>Visit <a href="http://localhost:3000/api/lexicon/corrections" target="_blank">http://localhost:3000/api/lexicon/corrections</a> to see logged corrections</li>
+    </ol>
+  </div>
+</body>
+</html>

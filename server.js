@@ -50,6 +50,48 @@ function saveLexicon() {
 // Load lexicon on startup
 loadLexicon();
 
+// ========== CORRECTIONS LOG ==========
+let correctionsCache = [];
+const correctionsPath = path.join(__dirname, 'data', 'lexicon_corrections.json');
+
+function loadCorrections() {
+  try {
+    if (!fs.existsSync(correctionsPath)) {
+      // Create empty file if it doesn't exist
+      fs.writeFileSync(correctionsPath, JSON.stringify([], null, 2), 'utf8');
+      console.log('✓ Created lexicon_corrections.json');
+      correctionsCache = [];
+      return;
+    }
+
+    const data = fs.readFileSync(correctionsPath, 'utf8');
+    correctionsCache = JSON.parse(data);
+    console.log(`✓ Loaded corrections log: ${correctionsCache.length} entries`);
+  } catch (error) {
+    console.error('Error loading corrections:', error);
+    correctionsCache = [];
+  }
+}
+
+function saveCorrections() {
+  try {
+    // Ensure data directory exists
+    const dataDir = path.join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    // Write with pretty formatting
+    fs.writeFileSync(correctionsPath, JSON.stringify(correctionsCache, null, 2), 'utf8');
+    console.log(`✓ Saved corrections log: ${correctionsCache.length} entries`);
+  } catch (error) {
+    console.error('Error saving corrections:', error);
+  }
+}
+
+// Load corrections on startup
+loadCorrections();
+
 // Simple transcription endpoint for conversational prompts
 app.post('/api/transcribe', async (req, res) => {
   try {
@@ -1346,7 +1388,9 @@ async function autoMatchParts(repairs) {
             quantity: quantity,
             auto_matched: true,
             original_text: partString,
-            match_confidence: parseFloat(matchedPart.similarity)
+            match_confidence: parseFloat(matchedPart.similarity),
+            _parsedQuantity: quantity,  // Store original for corrections tracking
+            _parsedName: matchedPart.name  // Store original for corrections tracking
           });
         }
 
@@ -2293,6 +2337,141 @@ app.delete('/api/lexicon/:kind/:trigger', (req, res) => {
 
   } catch (error) {
     console.error('Error deleting lexicon entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== CORRECTIONS LOG ENDPOINTS ==========
+
+// POST /api/lexicon/corrections - Log a user correction
+app.post('/api/lexicon/corrections', (req, res) => {
+  try {
+    const { field, raw, normalized, oldValue, newValue, timestamp } = req.body;
+
+    // Validate required fields
+    if (!field || !oldValue || !newValue) {
+      return res.status(400).json({ error: 'field, oldValue, and newValue are required' });
+    }
+
+    // Validate field type
+    const validFields = ['name', 'category', 'type', 'price', 'quantity'];
+    if (!validFields.includes(field)) {
+      return res.status(400).json({ error: `field must be one of: ${validFields.join(', ')}` });
+    }
+
+    // Skip if old and new values are the same (no actual correction)
+    if (oldValue === newValue) {
+      return res.json({ success: true, skipped: true, reason: 'No change detected' });
+    }
+
+    // Create correction entry
+    const correction = {
+      field,
+      raw: raw || '',
+      normalized: normalized || '',
+      oldValue,
+      newValue,
+      timestamp: timestamp || Date.now(),
+      created_at: new Date().toISOString()
+    };
+
+    // Add to cache
+    correctionsCache.push(correction);
+
+    // Save to file (async to not block response)
+    setImmediate(() => saveCorrections());
+
+    console.log(`📝 Correction logged: ${field} "${oldValue}" → "${newValue}"`);
+
+    res.json({ success: true, correction });
+
+  } catch (error) {
+    console.error('Error logging correction:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/lexicon/corrections - Retrieve corrections log
+app.get('/api/lexicon/corrections', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+    const field = req.query.field; // Optional filter by field
+
+    let corrections = correctionsCache;
+
+    // Filter by field if specified
+    if (field) {
+      corrections = corrections.filter(c => c.field === field);
+    }
+
+    // Sort by timestamp descending (most recent first)
+    corrections = corrections
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+      .slice(0, limit);
+
+    res.json({
+      corrections,
+      total: correctionsCache.length,
+      returned: corrections.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching corrections:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/lexicon/suggestions - Get suggested synonyms based on recurring corrections
+app.get('/api/lexicon/suggestions', (req, res) => {
+  try {
+    const minOccurrences = parseInt(req.query.minOccurrences) || 2;
+
+    // Group corrections by oldValue → newValue pattern
+    const patterns = {};
+
+    correctionsCache.forEach(correction => {
+      // Only consider name corrections for synonym suggestions
+      if (correction.field === 'name') {
+        const key = `${correction.oldValue}→${correction.newValue}`;
+        if (!patterns[key]) {
+          patterns[key] = {
+            oldValue: correction.oldValue,
+            newValue: correction.newValue,
+            count: 0,
+            firstSeen: correction.timestamp,
+            lastSeen: correction.timestamp,
+            raw: correction.raw,
+            normalized: correction.normalized
+          };
+        }
+        patterns[key].count++;
+        patterns[key].lastSeen = Math.max(patterns[key].lastSeen, correction.timestamp);
+      }
+    });
+
+    // Convert to array and filter by minimum occurrences
+    const suggestions = Object.values(patterns)
+      .filter(p => p.count >= minOccurrences)
+      .sort((a, b) => b.count - a.count) // Sort by frequency
+      .map(p => ({
+        trigger: p.oldValue.toLowerCase(),
+        replacement: p.newValue.toLowerCase(),
+        kind: 'synonym',
+        score: 1.0,
+        notes: `Auto-suggested from ${p.count} user corrections`,
+        occurrences: p.count,
+        firstSeen: new Date(p.firstSeen).toISOString(),
+        lastSeen: new Date(p.lastSeen).toISOString()
+      }));
+
+    res.json({
+      suggestions,
+      total: suggestions.length,
+      minOccurrences
+    });
+
+  } catch (error) {
+    console.error('Error generating suggestions:', error);
     res.status(500).json({ error: error.message });
   }
 });
