@@ -731,23 +731,24 @@ function parsePartPhrase(segment) {
   result.name = cleanedName;
 
   // Ensure single size token and singular noun (prevents "AA AA battery")
-  const sizeRep = '(aa|aaa|c|d|9v|cr2032)';
-  const sizeRx = /\b(aa|aaa|c|d|9v|cr2032)\b/i;
-  if (sizeRx.test(result.name)) {
-    // Remove any second occurrence of the same size
-    result.name = result.name.replace(new RegExp(`\\b(${sizeRep})\\s+\\1\\b`, 'gi'), '$1');
-  }
-  // Ensure singular: batteries -> battery
-  result.name = result.name.replace(/\bbatteries\b/i, 'battery');
+  // Step 1: Normalize to lowercase for de-duping
+  let normalizedName = result.name.toLowerCase();
 
-  // Capitalize size for display consistency
-  result.name = result.name
-    .replace(/\baa\b/i, 'AA')
-    .replace(/\baaa\b/i, 'AAA')
-    .replace(/\bc\b/i, 'C')
-    .replace(/\bd\b/i, 'D')
-    .replace(/\b9v\b/i, '9V')
-    .replace(/\bcr2032\b/i, 'CR2032');
+  // Step 2: De-dupe repeated size tokens (case-insensitive)
+  const sizeRep = '(aa|aaa|c|d|9v|cr2032)';
+  normalizedName = normalizedName.replace(new RegExp(`\\b(${sizeRep})\\s+\\1\\b`, 'g'), '$1');
+
+  // Step 3: Ensure singular: batteries -> battery
+  normalizedName = normalizedName.replace(/\bbatteries\b/g, 'battery');
+
+  // Step 4: Capitalize size tokens for display consistency
+  result.name = normalizedName
+    .replace(/\baa\b/g, 'AA')
+    .replace(/\baaa\b/g, 'AAA')
+    .replace(/\bc\b/g, 'C')
+    .replace(/\bd\b/g, 'D')
+    .replace(/\b9v\b/g, '9V')
+    .replace(/\bcr2032\b/g, 'CR2032');
 
   // Infer category
   result.category = inferCategoryFromName(result.name);

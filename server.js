@@ -1367,20 +1367,27 @@ function extractQuantityAndTerm(partString) {
   let searchTerm = partString.toLowerCase();
   let refrigerantCode = null;
 
-  // Match patterns like "4 lbs", "5 pounds", "2x", "3 units", etc.
-  const quantityPatterns = [
-    /(\d+)\s*(?:lbs?|pounds?)/i,  // "4 lbs", "5 pounds"
-    /(\d+)\s*(?:x|×)/i,            // "2x", "3×"
-    /(\d+)\s+/,                     // "4 " (number followed by space)
-  ];
+  // GUARD: Skip quantity extraction if starts with dimension pattern (e.g., "24x24x2 pleated filters")
+  // This prevents treating "24" as quantity when it's part of a dimension
+  const DIM_RX = /^\s*\d{1,3}\s*(x|×|\*)\s*\d{1,3}(\s*(x|×|\*)\s*\d{1,3})?/i;
+  const hasDimensionAtStart = DIM_RX.test(partString);
 
-  for (const pattern of quantityPatterns) {
-    const match = partString.match(pattern);
-    if (match) {
-      quantity = parseInt(match[1]);
-      // Remove the quantity from search term
-      searchTerm = partString.replace(pattern, '').trim();
-      break;
+  if (!hasDimensionAtStart) {
+    // Match patterns like "4 lbs", "5 pounds", "2x", "3 units", etc.
+    const quantityPatterns = [
+      /^(\d+)\s*(?:lbs?|pounds?)\s+/i,  // "4 lbs ", "5 pounds " (must have space after)
+      /^(\d+)\s*(?:x|×)\s+(?![0-9])/i,  // "2x " (but NOT "2x3" which is dimension)
+      /^(\d+)\s+/,                       // "4 " (number followed by space at start)
+    ];
+
+    for (const pattern of quantityPatterns) {
+      const match = partString.match(pattern);
+      if (match) {
+        quantity = parseInt(match[1]);
+        // Remove the quantity from search term
+        searchTerm = partString.replace(pattern, '').trim();
+        break;
+      }
     }
   }
 
