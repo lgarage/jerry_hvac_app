@@ -14,7 +14,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@fireworks-ai/fireworks-ai": "^1.2.0",
     "@supabase/storage-js": "^2.76.1",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",

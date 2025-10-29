@@ -3,11 +3,13 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { fromPath } = require('pdf2pic');
-const Fireworks = require('@fireworks-ai/fireworks-ai').default;
+const OpenAI = require('openai');
 const { sql } = require('./db');
 
-const fireworks = new Fireworks({
-  apiKey: process.env.FIREWORKS_API_KEY
+// Fireworks uses OpenAI-compatible API
+const fireworks = new OpenAI({
+  apiKey: process.env.FIREWORKS_API_KEY,
+  baseURL: 'https://api.fireworks.ai/inference/v1'
 });
 
 const LLAMA4_MODEL = process.env.VISION_MODEL || 'accounts/fireworks/models/llama4-maverick-instruct-basic';
