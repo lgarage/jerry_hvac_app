@@ -33,9 +33,9 @@ async function extractImagesFromPDF(pdfPath, outputDir = './temp_schematics') {
     });
 
     // Get PDF page count first
-    const PDFParser = require('pdf-parse');
+    const pdfParse = require('pdf-parse');
     const dataBuffer = fs.readFileSync(pdfPath);
-    const data = await PDFParser(dataBuffer);
+    const data = await pdfParse(dataBuffer);
     const numPages = data.numpages;
 
     console.log(`📊 PDF has ${numPages} pages, extracting images...`);

@@ -13,7 +13,7 @@ try {
 
 const fs = require('fs');
 const path = require('path');
-const PDFParser = require('pdf-parse');
+const pdfParse = require('pdf-parse');
 const OpenAI = require('openai');
 const { sql } = require('./db');
 const Tesseract = require('tesseract.js');
@@ -107,7 +107,7 @@ async function extractTextFromPDF(pdfPath) {
 
   try {
     const dataBuffer = fs.readFileSync(pdfPath);
-    const data = await PDFParser(dataBuffer);
+    const data = await pdfParse(dataBuffer);
 
     let finalText = data.text;
     const numPages = data.numpages;
