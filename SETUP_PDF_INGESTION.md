@@ -81,6 +81,7 @@ OPENAI_API_KEY=sk-your-actual-key-here
 
 # Fireworks AI (for schematic analysis) - NEW
 FIREWORKS_API_KEY=your-fireworks-api-key-here
+VISION_MODEL=accounts/fireworks/models/llama4-maverick-instruct-basic
 ```
 
 **Get Fireworks API Key:** Sign up at [fireworks.ai](https://fireworks.ai)

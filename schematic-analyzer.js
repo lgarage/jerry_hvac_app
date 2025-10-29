@@ -10,7 +10,7 @@ const fireworks = new Fireworks({
   apiKey: process.env.FIREWORKS_API_KEY
 });
 
-const LLAMA4_MODEL = 'accounts/fireworks/models/llama4-maverick-instruct-basic';
+const LLAMA4_MODEL = process.env.VISION_MODEL || 'accounts/fireworks/models/llama4-maverick-instruct-basic';
 
 /**
  * Extract images from PDF pages for vision analysis
