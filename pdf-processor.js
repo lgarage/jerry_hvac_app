@@ -453,9 +453,19 @@ async function storeParts(parts, manualId) {
 
 /**
  * Process a PDF file end-to-end
+ * @param {string} pdfPath - Path to PDF file
+ * @param {number} manualId - Manual ID in database
+ * @param {object} options - Processing options
+ * @param {boolean} options.extractTerms - Extract terms and parts (default: true)
+ * @param {boolean} options.extractSchematics - Extract schematics (default: true)
  */
-async function processPDF(pdfPath, manualId) {
+async function processPDF(pdfPath, manualId, options = {}) {
+  const { extractTerms = true, extractSchematics = true } = options;
+
   console.log('\n🚀 Starting PDF processing...\n');
+  if (!extractTerms) {
+    console.log('⚡ Fast mode: Skipping term/part extraction\n');
+  }
 
   try {
     // Update manual status
@@ -465,32 +475,42 @@ async function processPDF(pdfPath, manualId) {
       WHERE id = ${manualId}
     `;
 
-    // Extract text
-    const { text, numPages } = await extractTextFromPDF(pdfPath);
+    let termStats = { stored: 0, skipped: 0 };
+    let partStats = { stored: 0, skipped: 0 };
+    let numPages = 0;
 
-    // Update page count
-    await sql`
-      UPDATE manuals
-      SET page_count = ${numPages}
-      WHERE id = ${manualId}
-    `;
+    if (extractTerms) {
+      // Extract text
+      const { text, numPages: pages } = await extractTextFromPDF(pdfPath);
+      numPages = pages;
 
-    console.log(`✓ Extracted ${text.length} characters from ${numPages} pages\n`);
+      // Update page count
+      await sql`
+        UPDATE manuals
+        SET page_count = ${numPages}
+        WHERE id = ${manualId}
+      `;
 
-    // Extract terminology
-    const terms = await extractTerminology(text);
+      console.log(`✓ Extracted ${text.length} characters from ${numPages} pages\n`);
 
-    // Extract parts
-    const parts = await extractParts(text);
+      // Extract terminology
+      const terms = await extractTerminology(text);
 
-    // Store terminology and parts in database
-    const termStats = await storeTerminology(terms, manualId);
-    const partStats = await storeParts(parts, manualId);
+      // Extract parts
+      const parts = await extractParts(text);
 
-    // NEW: Schematic analysis using Fireworks Llama4 Maverick
-    console.log(''); // blank line for readability
-    const { analyzePDFSchematics } = require('./schematic-analyzer');
-    const schematicStats = await analyzePDFSchematics(pdfPath, manualId);
+      // Store terminology and parts in database
+      termStats = await storeTerminology(terms, manualId);
+      partStats = await storeParts(parts, manualId);
+    }
+
+    // Schematic analysis using Fireworks Llama4 Maverick
+    let schematicStats = { schematicsFound: 0, totalPages: 0 };
+    if (extractSchematics) {
+      console.log(''); // blank line for readability
+      const { analyzePDFSchematics } = require('./schematic-analyzer');
+      schematicStats = await analyzePDFSchematics(pdfPath, manualId);
+    }
 
     // Update manual status
     await sql`
@@ -502,9 +522,13 @@ async function processPDF(pdfPath, manualId) {
     `;
 
     console.log('\n✅ PDF processing complete!');
-    console.log(`   Terms: ${termStats.stored} new, ${termStats.skipped} existing`);
-    console.log(`   Parts: ${partStats.stored} new, ${partStats.skipped} existing`);
-    console.log(`   Schematics: ${schematicStats.schematicsFound} found in ${schematicStats.totalPages || 0} pages`);
+    if (extractTerms) {
+      console.log(`   Terms: ${termStats.stored} new, ${termStats.skipped} existing`);
+      console.log(`   Parts: ${partStats.stored} new, ${partStats.skipped} existing`);
+    }
+    if (extractSchematics) {
+      console.log(`   Schematics: ${schematicStats.schematicsFound} found in ${schematicStats.totalPages || 0} pages`);
+    }
 
     return {
       success: true,

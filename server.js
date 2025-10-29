@@ -2541,10 +2541,17 @@ app.post('/api/manuals/upload', upload.single('pdf'), async (req, res) => {
 
     const manualId = manual[0].id;
 
+    // Check for processing options via query params
+    const schematicsOnly = req.query.schematicsOnly === 'true';
+    const processingOptions = {
+      extractTerms: !schematicsOnly,
+      extractSchematics: true
+    };
+
     // Process PDF asynchronously
     setImmediate(async () => {
       try {
-        await processPDF(req.file.path, manualId);
+        await processPDF(req.file.path, manualId, processingOptions);
       } catch (error) {
         console.error('Error processing PDF:', error);
       }
