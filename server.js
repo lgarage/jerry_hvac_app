@@ -2476,6 +2476,193 @@ app.get('/api/lexicon/suggestions', (req, res) => {
   }
 });
 
+// ========== PDF INGESTION ENDPOINTS ==========
+
+const multer = require('multer');
+const { processPDF } = require('./pdf-processor');
+
+// Create uploads directory if it doesn't exist
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Configure multer for PDF uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF files are allowed'), false);
+    }
+  },
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB limit
+  }
+});
+
+// POST /api/manuals/upload - Upload and process a PDF manual
+app.post('/api/manuals/upload', upload.single('pdf'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No PDF file uploaded' });
+    }
+
+    console.log(`📤 Uploaded: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
+
+    // Store manual record in database
+    const manual = await sql`
+      INSERT INTO manuals (
+        filename,
+        original_filename,
+        storage_path,
+        file_size,
+        status
+      ) VALUES (
+        ${req.file.filename},
+        ${req.file.originalname},
+        ${req.file.path},
+        ${req.file.size},
+        'pending'
+      )
+      RETURNING id, filename, original_filename, status
+    `;
+
+    const manualId = manual[0].id;
+
+    // Process PDF asynchronously
+    setImmediate(async () => {
+      try {
+        await processPDF(req.file.path, manualId);
+      } catch (error) {
+        console.error('Error processing PDF:', error);
+      }
+    });
+
+    res.json({
+      success: true,
+      manual: manual[0],
+      message: 'PDF uploaded successfully. Processing started in background.'
+    });
+
+  } catch (error) {
+    console.error('Error uploading PDF:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/manuals - List all uploaded manuals
+app.get('/api/manuals', async (req, res) => {
+  try {
+    const manuals = await sql`
+      SELECT
+        id,
+        filename,
+        original_filename,
+        file_size,
+        uploaded_at,
+        processed_at,
+        status,
+        page_count,
+        error_message
+      FROM manuals
+      ORDER BY uploaded_at DESC
+    `;
+
+    res.json({ manuals });
+
+  } catch (error) {
+    console.error('Error fetching manuals:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/manuals/:id - Get manual details with statistics
+app.get('/api/manuals/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const manual = await sql`
+      SELECT * FROM manual_stats
+      WHERE id = ${id}
+    `;
+
+    if (manual.length === 0) {
+      return res.status(404).json({ error: 'Manual not found' });
+    }
+
+    // Get extracted terms
+    const terms = await sql`
+      SELECT
+        ht.standard_term,
+        ht.category,
+        htp.confidence_score,
+        htp.created_at
+      FROM hvac_term_provenance htp
+      JOIN hvac_terminology ht ON ht.id = htp.terminology_id
+      WHERE htp.manual_id = ${id}
+      ORDER BY htp.created_at DESC
+    `;
+
+    // Get extracted parts
+    const parts = await sql`
+      SELECT
+        extracted_name,
+        extracted_number,
+        status,
+        confidence_score,
+        created_at
+      FROM manual_parts_extracted
+      WHERE manual_id = ${id}
+      ORDER BY created_at DESC
+    `;
+
+    res.json({
+      manual: manual[0],
+      terms,
+      parts
+    });
+
+  } catch (error) {
+    console.error('Error fetching manual details:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/manuals/:id/status - Check processing status
+app.get('/api/manuals/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const manual = await sql`
+      SELECT status, processed_at, error_message, page_count
+      FROM manuals
+      WHERE id = ${id}
+    `;
+
+    if (manual.length === 0) {
+      return res.status(404).json({ error: 'Manual not found' });
+    }
+
+    res.json(manual[0]);
+
+  } catch (error) {
+    console.error('Error checking status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Dave Mode server running on http://localhost:${PORT}`);
   console.log(`Configured with OpenAI: ${!!process.env.OPENAI_API_KEY}`);

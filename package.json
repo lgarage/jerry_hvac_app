@@ -14,11 +14,14 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@supabase/storage-js": "^2.76.1",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "multer": "^2.0.2",
     "openai": "^6.3.0",
+    "pdf-parse": "^2.4.5",
     "postgres": "^3.4.7"
   },
   "devDependencies": {
