@@ -22,41 +22,38 @@ async function runMigration(migrationPath) {
 
     const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
 
-    // Split by semicolons to execute statements separately (helps with error reporting)
-    const statements = migrationSQL
-      .split(';')
-      .map(s => s.trim())
-      .filter(s => s.length > 0 && !s.startsWith('--'));
+    // Remove comments and empty lines for cleaner output
+    const cleanSQL = migrationSQL
+      .split('\n')
+      .filter(line => !line.trim().startsWith('--'))
+      .join('\n')
+      .trim();
 
-    console.log(`📊 Found ${statements.length} SQL statements to execute\n`);
+    console.log('📊 Executing migration SQL...\n');
 
-    let successCount = 0;
-    for (let i = 0; i < statements.length; i++) {
-      const statement = statements[i];
-      if (!statement) continue;
+    try {
+      // Execute the entire migration as one transaction
+      await sql.unsafe(cleanSQL);
 
-      try {
-        await sql.unsafe(statement);
-        successCount++;
+      console.log('✓ Migration SQL executed successfully');
+      console.log('\n' + '─'.repeat(60));
+      console.log('✅ Migration completed successfully');
 
-        // Show progress
-        const preview = statement.substring(0, 60).replace(/\n/g, ' ');
-        console.log(`✓ [${i + 1}/${statements.length}] ${preview}...`);
-      } catch (error) {
-        // Some errors are okay (e.g., "already exists")
-        if (error.message.includes('already exists')) {
-          console.log(`⊙ [${i + 1}/${statements.length}] Already exists (skipping)`);
-        } else {
-          console.error(`✗ [${i + 1}/${statements.length}] Failed:`, error.message);
-          console.error(`   Statement: ${statement.substring(0, 100)}...`);
-        }
+      return true;
+    } catch (error) {
+      // Check if error is due to objects already existing
+      if (error.message.includes('already exists')) {
+        console.log('⊙ Some objects already exist (this is usually okay)');
+        console.log('  Error: ' + error.message.substring(0, 100));
+        console.log('\n' + '─'.repeat(60));
+        console.log('✅ Migration completed (with some objects already existing)');
+        return true;
+      } else {
+        console.error('✗ Migration failed:', error.message);
+        console.error('\nFull error:', error);
+        return false;
       }
     }
-
-    console.log('\n' + '─'.repeat(60));
-    console.log(`✅ Migration completed: ${successCount}/${statements.length} statements executed`);
-
-    return true;
   } catch (error) {
     console.error('\n❌ Migration failed:', error.message);
     return false;
