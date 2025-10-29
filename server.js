@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const OpenAI = require('openai');
 const { sql } = require('./db');
 
@@ -16,6 +18,79 @@ app.use(express.static('public'));
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
+
+// ========== LEXICON CACHE ==========
+let lexiconCache = [];
+let lexiconLastUpdated = Date.now();
+
+function loadLexicon() {
+  try {
+    const lexiconPath = path.join(__dirname, 'data', 'lexicon.json');
+    const data = fs.readFileSync(lexiconPath, 'utf8');
+    lexiconCache = JSON.parse(data);
+    lexiconLastUpdated = Date.now();
+    console.log(`✓ Loaded lexicon: ${lexiconCache.length} entries`);
+  } catch (error) {
+    console.error('Error loading lexicon:', error);
+    lexiconCache = [];
+  }
+}
+
+function saveLexicon() {
+  try {
+    const lexiconPath = path.join(__dirname, 'data', 'lexicon.json');
+    fs.writeFileSync(lexiconPath, JSON.stringify(lexiconCache, null, 2), 'utf8');
+    lexiconLastUpdated = Date.now();
+    console.log(`✓ Saved lexicon: ${lexiconCache.length} entries`);
+  } catch (error) {
+    console.error('Error saving lexicon:', error);
+  }
+}
+
+// Load lexicon on startup
+loadLexicon();
+
+// ========== CORRECTIONS LOG ==========
+let correctionsCache = [];
+const correctionsPath = path.join(__dirname, 'data', 'lexicon_corrections.json');
+
+function loadCorrections() {
+  try {
+    if (!fs.existsSync(correctionsPath)) {
+      // Create empty file if it doesn't exist
+      fs.writeFileSync(correctionsPath, JSON.stringify([], null, 2), 'utf8');
+      console.log('✓ Created lexicon_corrections.json');
+      correctionsCache = [];
+      return;
+    }
+
+    const data = fs.readFileSync(correctionsPath, 'utf8');
+    correctionsCache = JSON.parse(data);
+    console.log(`✓ Loaded corrections log: ${correctionsCache.length} entries`);
+  } catch (error) {
+    console.error('Error loading corrections:', error);
+    correctionsCache = [];
+  }
+}
+
+function saveCorrections() {
+  try {
+    // Ensure data directory exists
+    const dataDir = path.join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    // Write with pretty formatting
+    fs.writeFileSync(correctionsPath, JSON.stringify(correctionsCache, null, 2), 'utf8');
+    console.log(`✓ Saved corrections log: ${correctionsCache.length} entries`);
+  } catch (error) {
+    console.error('Error saving corrections:', error);
+  }
+}
+
+// Load corrections on startup
+loadCorrections();
 
 // Simple transcription endpoint for conversational prompts
 app.post('/api/transcribe', async (req, res) => {
@@ -1313,7 +1388,9 @@ async function autoMatchParts(repairs) {
             quantity: quantity,
             auto_matched: true,
             original_text: partString,
-            match_confidence: parseFloat(matchedPart.similarity)
+            match_confidence: parseFloat(matchedPart.similarity),
+            _parsedQuantity: quantity,  // Store original for corrections tracking
+            _parsedName: matchedPart.name  // Store original for corrections tracking
           });
         }
 
@@ -1334,20 +1411,27 @@ function extractQuantityAndTerm(partString) {
   let searchTerm = partString.toLowerCase();
   let refrigerantCode = null;
 
-  // Match patterns like "4 lbs", "5 pounds", "2x", "3 units", etc.
-  const quantityPatterns = [
-    /(\d+)\s*(?:lbs?|pounds?)/i,  // "4 lbs", "5 pounds"
-    /(\d+)\s*(?:x|×)/i,            // "2x", "3×"
-    /(\d+)\s+/,                     // "4 " (number followed by space)
-  ];
+  // GUARD: Skip quantity extraction if starts with dimension pattern (e.g., "24x24x2 pleated filters")
+  // This prevents treating "24" as quantity when it's part of a dimension
+  const DIM_RX = /^\s*\d{1,3}\s*(x|×|\*)\s*\d{1,3}(\s*(x|×|\*)\s*\d{1,3})?/i;
+  const hasDimensionAtStart = DIM_RX.test(partString);
 
-  for (const pattern of quantityPatterns) {
-    const match = partString.match(pattern);
-    if (match) {
-      quantity = parseInt(match[1]);
-      // Remove the quantity from search term
-      searchTerm = partString.replace(pattern, '').trim();
-      break;
+  if (!hasDimensionAtStart) {
+    // Match patterns like "4 lbs", "5 pounds", "2x", "3 units", etc.
+    const quantityPatterns = [
+      /^(\d+)\s*(?:lbs?|pounds?)\s+/i,  // "4 lbs ", "5 pounds " (must have space after)
+      /^(\d+)\s*(?:x|×)\s+(?![0-9])/i,  // "2x " (but NOT "2x3" which is dimension)
+      /^(\d+)\s+/,                       // "4 " (number followed by space at start)
+    ];
+
+    for (const pattern of quantityPatterns) {
+      const match = partString.match(pattern);
+      if (match) {
+        quantity = parseInt(match[1]);
+        // Remove the quantity from search term
+        searchTerm = partString.replace(pattern, '').trim();
+        break;
+      }
     }
   }
 
@@ -2147,6 +2231,434 @@ app.delete('/api/terminology/:id', async (req, res) => {
 
   } catch (error) {
     console.error('Error deleting terminology:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== LEXICON ENDPOINTS ==========
+
+// GET /api/lexicon - Get current lexicon (with optional since parameter for caching)
+app.get('/api/lexicon', (req, res) => {
+  try {
+    const { since } = req.query;
+
+    // If client has cached version and it's still fresh, return 304 Not Modified
+    if (since && parseInt(since) >= lexiconLastUpdated) {
+      return res.status(304).end();
+    }
+
+    res.json({
+      lexicon: lexiconCache,
+      lastUpdated: lexiconLastUpdated
+    });
+  } catch (error) {
+    console.error('Error fetching lexicon:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/lexicon - Add new lexicon entry
+app.post('/api/lexicon', (req, res) => {
+  try {
+    const { kind, trigger, replacement, score, notes } = req.body;
+
+    // Validate required fields
+    if (!kind || !trigger || !replacement) {
+      return res.status(400).json({ error: 'kind, trigger, and replacement are required' });
+    }
+
+    // Validate kind
+    const validKinds = ['synonym', 'replace', 'regex', 'unit', 'category'];
+    if (!validKinds.includes(kind)) {
+      return res.status(400).json({ error: `kind must be one of: ${validKinds.join(', ')}` });
+    }
+
+    // Create new entry
+    const newEntry = {
+      kind,
+      trigger: trigger.toLowerCase(),
+      replacement: replacement.toLowerCase(),
+      score: score || 1.0,
+      notes: notes || '',
+      created_at: new Date().toISOString()
+    };
+
+    // Check if trigger already exists
+    const existingIndex = lexiconCache.findIndex(entry =>
+      entry.kind === kind && entry.trigger === newEntry.trigger
+    );
+
+    if (existingIndex >= 0) {
+      // Update existing entry
+      lexiconCache[existingIndex] = { ...lexiconCache[existingIndex], ...newEntry };
+      console.log(`✓ Updated lexicon entry: ${trigger} → ${replacement} (${kind})`);
+    } else {
+      // Add new entry
+      lexiconCache.push(newEntry);
+      console.log(`✓ Added lexicon entry: ${trigger} → ${replacement} (${kind})`);
+    }
+
+    // Save to file
+    saveLexicon();
+
+    res.json({
+      success: true,
+      entry: newEntry,
+      lastUpdated: lexiconLastUpdated
+    });
+
+  } catch (error) {
+    console.error('Error adding lexicon entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/lexicon/:kind/:trigger - Remove lexicon entry
+app.delete('/api/lexicon/:kind/:trigger', (req, res) => {
+  try {
+    const { kind, trigger } = req.params;
+
+    const initialLength = lexiconCache.length;
+    lexiconCache = lexiconCache.filter(entry =>
+      !(entry.kind === kind && entry.trigger === trigger.toLowerCase())
+    );
+
+    if (lexiconCache.length < initialLength) {
+      saveLexicon();
+      console.log(`✓ Deleted lexicon entry: ${trigger} (${kind})`);
+      res.json({
+        success: true,
+        deleted: { kind, trigger },
+        lastUpdated: lexiconLastUpdated
+      });
+    } else {
+      res.status(404).json({ error: 'Entry not found' });
+    }
+
+  } catch (error) {
+    console.error('Error deleting lexicon entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== CORRECTIONS LOG ENDPOINTS ==========
+
+// POST /api/lexicon/corrections - Log a user correction
+app.post('/api/lexicon/corrections', (req, res) => {
+  try {
+    const { field, raw, normalized, oldValue, newValue, timestamp } = req.body;
+
+    // Validate required fields
+    if (!field || !oldValue || !newValue) {
+      return res.status(400).json({ error: 'field, oldValue, and newValue are required' });
+    }
+
+    // Validate field type
+    const validFields = ['name', 'category', 'type', 'price', 'quantity'];
+    if (!validFields.includes(field)) {
+      return res.status(400).json({ error: `field must be one of: ${validFields.join(', ')}` });
+    }
+
+    // Skip if old and new values are the same (no actual correction)
+    if (oldValue === newValue) {
+      return res.json({ success: true, skipped: true, reason: 'No change detected' });
+    }
+
+    // Create correction entry
+    const correction = {
+      field,
+      raw: raw || '',
+      normalized: normalized || '',
+      oldValue,
+      newValue,
+      timestamp: timestamp || Date.now(),
+      created_at: new Date().toISOString()
+    };
+
+    // Add to cache
+    correctionsCache.push(correction);
+
+    // Save to file (async to not block response)
+    setImmediate(() => saveCorrections());
+
+    console.log(`📝 Correction logged: ${field} "${oldValue}" → "${newValue}"`);
+
+    res.json({ success: true, correction });
+
+  } catch (error) {
+    console.error('Error logging correction:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/lexicon/corrections - Retrieve corrections log
+app.get('/api/lexicon/corrections', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+    const field = req.query.field; // Optional filter by field
+
+    let corrections = correctionsCache;
+
+    // Filter by field if specified
+    if (field) {
+      corrections = corrections.filter(c => c.field === field);
+    }
+
+    // Sort by timestamp descending (most recent first)
+    corrections = corrections
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+      .slice(0, limit);
+
+    res.json({
+      corrections,
+      total: correctionsCache.length,
+      returned: corrections.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching corrections:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/lexicon/suggestions - Get suggested synonyms based on recurring corrections
+app.get('/api/lexicon/suggestions', (req, res) => {
+  try {
+    const minOccurrences = parseInt(req.query.minOccurrences) || 2;
+
+    // Group corrections by oldValue → newValue pattern
+    const patterns = {};
+
+    correctionsCache.forEach(correction => {
+      // Only consider name corrections for synonym suggestions
+      if (correction.field === 'name') {
+        const key = `${correction.oldValue}→${correction.newValue}`;
+        if (!patterns[key]) {
+          patterns[key] = {
+            oldValue: correction.oldValue,
+            newValue: correction.newValue,
+            count: 0,
+            firstSeen: correction.timestamp,
+            lastSeen: correction.timestamp,
+            raw: correction.raw,
+            normalized: correction.normalized
+          };
+        }
+        patterns[key].count++;
+        patterns[key].lastSeen = Math.max(patterns[key].lastSeen, correction.timestamp);
+      }
+    });
+
+    // Convert to array and filter by minimum occurrences
+    const suggestions = Object.values(patterns)
+      .filter(p => p.count >= minOccurrences)
+      .sort((a, b) => b.count - a.count) // Sort by frequency
+      .map(p => ({
+        trigger: p.oldValue.toLowerCase(),
+        replacement: p.newValue.toLowerCase(),
+        kind: 'synonym',
+        score: 1.0,
+        notes: `Auto-suggested from ${p.count} user corrections`,
+        occurrences: p.count,
+        firstSeen: new Date(p.firstSeen).toISOString(),
+        lastSeen: new Date(p.lastSeen).toISOString()
+      }));
+
+    res.json({
+      suggestions,
+      total: suggestions.length,
+      minOccurrences
+    });
+
+  } catch (error) {
+    console.error('Error generating suggestions:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== PDF INGESTION ENDPOINTS ==========
+
+const multer = require('multer');
+const { processPDF } = require('./pdf-processor');
+
+// Create uploads directory if it doesn't exist
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Configure multer for PDF uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF files are allowed'), false);
+    }
+  },
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB limit
+  }
+});
+
+// POST /api/manuals/upload - Upload and process a PDF manual
+app.post('/api/manuals/upload', upload.single('pdf'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No PDF file uploaded' });
+    }
+
+    console.log(`📤 Uploaded: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
+
+    // Store manual record in database
+    const manual = await sql`
+      INSERT INTO manuals (
+        filename,
+        original_filename,
+        storage_path,
+        file_size,
+        status
+      ) VALUES (
+        ${req.file.filename},
+        ${req.file.originalname},
+        ${req.file.path},
+        ${req.file.size},
+        'pending'
+      )
+      RETURNING id, filename, original_filename, status
+    `;
+
+    const manualId = manual[0].id;
+
+    // Process PDF asynchronously
+    setImmediate(async () => {
+      try {
+        await processPDF(req.file.path, manualId);
+      } catch (error) {
+        console.error('Error processing PDF:', error);
+      }
+    });
+
+    res.json({
+      success: true,
+      manual: manual[0],
+      message: 'PDF uploaded successfully. Processing started in background.'
+    });
+
+  } catch (error) {
+    console.error('Error uploading PDF:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/manuals - List all uploaded manuals
+app.get('/api/manuals', async (req, res) => {
+  try {
+    const manuals = await sql`
+      SELECT
+        id,
+        filename,
+        original_filename,
+        file_size,
+        uploaded_at,
+        processed_at,
+        status,
+        page_count,
+        error_message
+      FROM manuals
+      ORDER BY uploaded_at DESC
+    `;
+
+    res.json({ manuals });
+
+  } catch (error) {
+    console.error('Error fetching manuals:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/manuals/:id - Get manual details with statistics
+app.get('/api/manuals/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const manual = await sql`
+      SELECT * FROM manual_stats
+      WHERE id = ${id}
+    `;
+
+    if (manual.length === 0) {
+      return res.status(404).json({ error: 'Manual not found' });
+    }
+
+    // Get extracted terms
+    const terms = await sql`
+      SELECT
+        ht.standard_term,
+        ht.category,
+        htp.confidence_score,
+        htp.created_at
+      FROM hvac_term_provenance htp
+      JOIN hvac_terminology ht ON ht.id = htp.terminology_id
+      WHERE htp.manual_id = ${id}
+      ORDER BY htp.created_at DESC
+    `;
+
+    // Get extracted parts
+    const parts = await sql`
+      SELECT
+        extracted_name,
+        extracted_number,
+        status,
+        confidence_score,
+        created_at
+      FROM manual_parts_extracted
+      WHERE manual_id = ${id}
+      ORDER BY created_at DESC
+    `;
+
+    res.json({
+      manual: manual[0],
+      terms,
+      parts
+    });
+
+  } catch (error) {
+    console.error('Error fetching manual details:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/manuals/:id/status - Check processing status
+app.get('/api/manuals/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const manual = await sql`
+      SELECT status, processed_at, error_message, page_count
+      FROM manuals
+      WHERE id = ${id}
+    `;
+
+    if (manual.length === 0) {
+      return res.status(404).json({ error: 'Manual not found' });
+    }
+
+    res.json(manual[0]);
+
+  } catch (error) {
+    console.error('Error checking status:', error);
     res.status(500).json({ error: error.message });
   }
 });

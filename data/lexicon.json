@@ -1,0 +1,205 @@
+[
+  {
+    "kind": "synonym",
+    "trigger": "plated",
+    "replacement": "pleated",
+    "score": 1.0,
+    "notes": "Common transcription error"
+  },
+  {
+    "kind": "synonym",
+    "trigger": "pleeted",
+    "replacement": "pleated",
+    "score": 1.0,
+    "notes": "Common transcription error"
+  },
+  {
+    "kind": "synonym",
+    "trigger": "d cell",
+    "replacement": "d battery",
+    "score": 1.0,
+    "notes": "Battery type normalization"
+  },
+  {
+    "kind": "synonym",
+    "trigger": "double a",
+    "replacement": "aa battery",
+    "score": 1.0,
+    "notes": "Battery type normalization"
+  },
+  {
+    "kind": "synonym",
+    "trigger": "triple a",
+    "replacement": "aaa battery",
+    "score": 1.0,
+    "notes": "Battery type normalization"
+  },
+  {
+    "kind": "synonym",
+    "trigger": "fuzes",
+    "replacement": "fuses",
+    "score": 1.0,
+    "notes": "Common misspelling"
+  },
+  {
+    "kind": "regex",
+    "trigger": "\\b(\\d+)\\s*(?:by|×|x)\\s*(\\d+)\\s*(?:by|×|x)\\s*(\\d+)\\b",
+    "replacement": "$1x$2x$3",
+    "score": 1.0,
+    "notes": "Normalize 3D dimensions (e.g., '24 by 24 by 2' → '24x24x2')"
+  },
+  {
+    "kind": "regex",
+    "trigger": "\\b(\\d+)\\s*(?:by|×|x)\\s*(\\d+)\\b",
+    "replacement": "$1x$2",
+    "score": 1.0,
+    "notes": "Normalize 2D dimensions (e.g., '20 by 25' → '20x25')"
+  },
+  {
+    "kind": "regex",
+    "trigger": "\\b(\\d+)\\s*volt(?:s)?\\b",
+    "replacement": "$1v",
+    "score": 1.0,
+    "notes": "Normalize voltage units"
+  },
+  {
+    "kind": "regex",
+    "trigger": "\\b(\\d+)\\s*amp(?:s)?\\b",
+    "replacement": "$1a",
+    "score": 1.0,
+    "notes": "Normalize amperage units"
+  },
+  {
+    "kind": "unit",
+    "trigger": "volt",
+    "replacement": "v",
+    "score": 1.0,
+    "notes": "Unit normalization"
+  },
+  {
+    "kind": "unit",
+    "trigger": "volts",
+    "replacement": "v",
+    "score": 1.0,
+    "notes": "Unit normalization"
+  },
+  {
+    "kind": "unit",
+    "trigger": "amp",
+    "replacement": "a",
+    "score": 1.0,
+    "notes": "Unit normalization"
+  },
+  {
+    "kind": "unit",
+    "trigger": "amps",
+    "replacement": "a",
+    "score": 1.0,
+    "notes": "Unit normalization"
+  },
+  {
+    "kind": "category",
+    "trigger": "fuse",
+    "replacement": "Electrical",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "filter",
+    "replacement": "Filters",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "battery",
+    "replacement": "Electrical",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "breaker",
+    "replacement": "Electrical",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "capacitor",
+    "replacement": "Electrical",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "contactor",
+    "replacement": "Electrical",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "thermostat",
+    "replacement": "Controls",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "sensor",
+    "replacement": "Controls",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "belt",
+    "replacement": "Mechanical",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "bearing",
+    "replacement": "Mechanical",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "valve",
+    "replacement": "Mechanical",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "compressor",
+    "replacement": "Refrigeration",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "refrigerant",
+    "replacement": "Refrigeration",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "evaporator",
+    "replacement": "Refrigeration",
+    "score": 1.0,
+    "notes": "Category inference"
+  },
+  {
+    "kind": "category",
+    "trigger": "condenser",
+    "replacement": "Refrigeration",
+    "score": 1.0,
+    "notes": "Category inference"
+  }
+]

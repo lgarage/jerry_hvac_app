@@ -12,10 +12,1251 @@ let modalMediaRecorder = null;
 let modalAudioChunks = [];
 let isModalRecording = false;
 let currentPartToAdd = '';
+let modalFieldHistory = {}; // Track previous field values for undo
+
+// Detected-parts queue for multi-part utterances
+let pendingPartsQueue = []; // Array of {quantity, name, category, type?, clarify?}
+let pendingPartIndex = 0;    // Current item index in queue
 
 // Conversational command state
 let conversationState = null; // Tracks multi-step voice commands
 // Format: { type: 'add_part' | 'add_term', data: {}, nextField: 'name', rawCommand: '' }
+
+// Lexicon cache for normalization
+let LEXICON_CACHE = [];
+let LEXICON_LAST_UPDATED = 0;
+
+// Corrections tracking for teaching the system
+let lastRawTranscript = '';
+let lastNormalizedTranscript = '';
+
+// ========== VOICE PARSER CONFIGURATION ==========
+const PARSER_CONFIG = {
+  // Hybrid validation settings
+  useServerValidation: true, // Toggle to disable GPT-4 validation (cost saving)
+  confidenceThreshold: 0.72, // Call GPT-4 only if client confidence < this
+
+  // Fuzzy matching settings
+  fuzzyMatchThreshold: 0.72, // Levenshtein similarity threshold
+
+  // Valid dropdown options
+  categories: ['Electrical', 'Mechanical', 'Refrigeration', 'Controls', 'Filters', 'Other'],
+  types: ['Consumable', 'Inventory'],
+
+  // Quantity multiplier keywords
+  multipliers: {
+    'pack': 1,
+    'packs': 1,
+    'pair': 2,
+    'pairs': 2,
+    'dozen': 12,
+    'dozens': 12
+  },
+
+  // Word-to-number mapping
+  numberWords: {
+    'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+    'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+    'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14, 'fifteen': 15,
+    'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20,
+    'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60, 'seventy': 70,
+    'eighty': 80, 'ninety': 90, 'hundred': 100, 'thousand': 1000,
+    'half': 0.5, 'quarter': 0.25, 'quarters': 0.25
+  }
+};
+
+// ========== LEXICON FUNCTIONS ==========
+
+/**
+ * Fetch lexicon from server and cache it
+ */
+async function fetchLexicon() {
+  try {
+    const response = await fetch(`/api/lexicon?since=${LEXICON_LAST_UPDATED}`);
+
+    if (response.status === 304) {
+      // Cache is still fresh
+      console.log('[Lexicon] Cache is up to date');
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch lexicon');
+    }
+
+    const data = await response.json();
+    LEXICON_CACHE = data.lexicon || [];
+    LEXICON_LAST_UPDATED = data.lastUpdated || Date.now();
+
+    console.log(`[Lexicon] Loaded ${LEXICON_CACHE.length} entries`);
+  } catch (error) {
+    console.error('[Lexicon] Error fetching:', error);
+  }
+}
+
+/**
+ * Add a new lexicon entry (for "Teach" feature)
+ */
+async function addLexiconEntry(kind, trigger, replacement, notes = '') {
+  try {
+    const response = await fetch('/api/lexicon', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, trigger, replacement, notes })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to add lexicon entry');
+    }
+
+    const data = await response.json();
+    console.log(`[Lexicon] Added: ${trigger} → ${replacement} (${kind})`);
+
+    // Refresh cache
+    await fetchLexicon();
+
+    return data;
+  } catch (error) {
+    console.error('[Lexicon] Error adding entry:', error);
+    throw error;
+  }
+}
+
+/**
+ * Log a user correction for future analysis and auto-suggestions
+ * Fire-and-forget - won't block UI if it fails
+ */
+async function logCorrection(field, oldValue, newValue, raw = '', normalized = '') {
+  // Skip if no actual change
+  if (oldValue === newValue) return;
+
+  try {
+    // Use stored transcripts if not provided
+    const correctionData = {
+      field,
+      oldValue: String(oldValue),
+      newValue: String(newValue),
+      raw: raw || lastRawTranscript,
+      normalized: normalized || lastNormalizedTranscript,
+      timestamp: Date.now()
+    };
+
+    console.log(`📝 Logging correction: ${field} "${oldValue}" → "${newValue}"`);
+
+    // Fire-and-forget POST
+    fetch('/api/lexicon/corrections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(correctionData)
+    }).catch(err => {
+      // Silently fail - don't block the UI
+      console.warn('[Corrections] Failed to log (non-blocking):', err.message);
+    });
+
+  } catch (error) {
+    // Silently fail - corrections are nice-to-have, not critical
+    console.warn('[Corrections] Error logging (non-blocking):', error.message);
+  }
+}
+
+/**
+ * Normalize transcript using lexicon rules
+ * Applies regex, synonyms, and unit replacements
+ */
+function normalizeTranscript(raw, lexicon = LEXICON_CACHE) {
+  if (!raw) return '';
+  if (!lexicon || !lexicon.length) return raw.trim();
+
+  let t = ' ' + raw.toLowerCase() + ' ';
+
+  console.log('[Normalize] Input:', raw);
+
+  // 1) Apply regex rules first (units, number formats)
+  const regexRules = lexicon.filter(e => e.kind === 'regex' && e.trigger && e.replacement);
+  for (const rule of regexRules) {
+    try {
+      const regex = new RegExp(rule.trigger, 'gi');
+      const before = t;
+      t = t.replace(regex, rule.replacement);
+      if (before !== t) {
+        console.log(`[Normalize] Regex: ${rule.trigger} →`, t.trim());
+      }
+    } catch (error) {
+      // Silent error for malformed user regex entries
+      // (Don't spam console with user mistakes in lexicon)
+    }
+  }
+
+  // 2) Apply word/phrase synonyms (try word-boundary first, then phrase fallback)
+  const synonymRules = lexicon.filter(e =>
+    (e.kind === 'synonym' || e.kind === 'replace' || e.kind === 'unit') &&
+    e.trigger &&
+    e.replacement
+  );
+
+  for (const rule of synonymRules) {
+    // Escape special regex chars in trigger
+    const escapedTrigger = rule.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // Try word-boundary match first (more precise)
+    const wordBoundaryRegex = new RegExp(`\\b${escapedTrigger}\\b`, 'gi');
+    const afterWordBoundary = t.replace(wordBoundaryRegex, rule.replacement);
+
+    if (afterWordBoundary !== t) {
+      // Word-boundary match succeeded
+      t = afterWordBoundary;
+      console.log(`[Normalize] Synonym (word): "${rule.trigger}" → "${rule.replacement}"`);
+    } else {
+      // Fallback: phrase match (for multi-word phrases like "double a")
+      const phraseRegex = new RegExp(escapedTrigger, 'gi');
+      const afterPhrase = t.replace(phraseRegex, rule.replacement);
+
+      if (afterPhrase !== t) {
+        t = afterPhrase;
+        console.log(`[Normalize] Synonym (phrase): "${rule.trigger}" → "${rule.replacement}"`);
+      }
+    }
+  }
+
+  // 2.5) De-dupe pass: collapse repeated tokens (fixes "AA AA battery" glitches)
+  // Collapse repeated size tokens like "aa aa battery" -> "aa battery"
+  const sizeRep = '(aa|aaa|c|d|9v|cr2032)';
+  const beforeDedupe = t;
+  t = t.replace(new RegExp(`\\b(${sizeRep})\\s+\\1\\b`, 'gi'), '$1');
+  // Collapse repeated noun too (rare speech glitches): "battery battery" -> "battery"
+  t = t.replace(/\b(battery)\s+\1\b/gi, '$1');
+  if (beforeDedupe !== t) {
+    console.log(`[Normalize] De-dupe: removed repeated tokens →`, t.trim());
+  }
+
+  // 3) Cleanup: trim and collapse spaces
+  const result = t.trim().replace(/\s+/g, ' ');
+
+  console.log('[Normalize] Output:', result);
+
+  return result;
+}
+
+// ========== VOICE PARSER HELPER FUNCTIONS ==========
+
+/**
+ * Calculate Levenshtein distance between two strings
+ * Used for fuzzy matching categories and types
+ */
+function levenshteinDistance(str1, str2) {
+  str1 = str1.toLowerCase();
+  str2 = str2.toLowerCase();
+
+  const matrix = [];
+
+  for (let i = 0; i <= str2.length; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= str1.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= str2.length; i++) {
+    for (let j = 1; j <= str1.length; j++) {
+      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[str2.length][str1.length];
+}
+
+/**
+ * Calculate similarity score (0-1) between two strings
+ */
+function similarity(str1, str2) {
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+
+  if (longer.length === 0) return 1.0;
+
+  const editDistance = levenshteinDistance(longer, shorter);
+  return (longer.length - editDistance) / longer.length;
+}
+
+/**
+ * Convert word-based numbers to numeric values
+ * Examples: "one twenty-five" → 1.25, "ninety-nine" → 99
+ */
+function wordsToNumber(text) {
+  text = text.toLowerCase().trim();
+  const words = text.split(/\s+/);
+  const numberWords = PARSER_CONFIG.numberWords;
+
+  let result = 0;
+  let current = 0;
+  let foundNumber = false;
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+
+    if (numberWords.hasOwnProperty(word)) {
+      foundNumber = true;
+      const value = numberWords[word];
+
+      if (value >= 100) {
+        current = (current || 1) * value;
+      } else {
+        current += value;
+      }
+    } else if (word === 'and') {
+      // Handle "three and a half" = 3.5
+      continue;
+    } else if (i > 0 && foundNumber) {
+      // Stop when we hit a non-number word after finding numbers
+      break;
+    }
+  }
+
+  result += current;
+  return foundNumber ? result : null;
+}
+
+/**
+ * Extract leading quantity with multipliers
+ * Examples:
+ *   "2 AA batteries" → { quantity: 2, remaining: "AA batteries" }
+ *   "12-pack AA batteries" → { quantity: 12, remaining: "AA batteries" }
+ *   "pack of 12 AA batteries" → { quantity: 12, remaining: "AA batteries" }
+ *   "two AAA batteries" → { quantity: 2, remaining: "AAA batteries" }
+ *   "3/4 ball valve" → null (embedded fraction, not a quantity)
+ */
+function extractLeadingQuantity(text) {
+  text = text.trim();
+
+  // Helper to clean remaining text
+  const cleanRemaining = (str) => {
+    return str.replace(/^(of\s+|pack\s+|packs\s+)+/i, '').trim();
+  };
+
+  // Skip if the phrase starts with an HVAC filter dimension like "24x24x2" or "20 x 25 x 1"
+  // This prevents treating "24x24x2 pleated filters" as quantity=24
+  const DIM_RX = /^\s*\d{1,3}\s*(x|×|\*)\s*\d{1,3}(\s*(x|×|\*)\s*\d{1,3})?/i;
+  if (DIM_RX.test(text)) {
+    return null; // do not extract a quantity from leading dimension
+  }
+
+  // Skip if starts with fraction pattern (e.g., "3/4 ball valve")
+  if (/^\d+\/\d+/.test(text)) {
+    return null;
+  }
+
+  // Pattern 1: Leading digit(s) with optional decimal
+  const digitMatch = text.match(/^(\d+(?:\.\d+)?)\s+(.+)/);
+  if (digitMatch) {
+    const qty = parseFloat(digitMatch[1]);
+    let remaining = digitMatch[2];
+
+    // Check for multipliers after the number (e.g., "2 pack of filters")
+    const multiplierMatch = remaining.match(/^(pack|packs|pair|pairs|dozen|dozens)\s+(?:of\s+)?(.+)/i);
+    if (multiplierMatch) {
+      const multiplierWord = multiplierMatch[1].toLowerCase();
+      const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
+      remaining = cleanRemaining(multiplierMatch[2]);
+      return { quantity: qty * multiplier, remaining };
+    }
+
+    return { quantity: qty, remaining: cleanRemaining(remaining) };
+  }
+
+  // Pattern 2: Word-based number at start
+  const wordMatch = wordsToNumber(text);
+  if (wordMatch !== null) {
+    // Find where the number words end
+    const words = text.split(/\s+/);
+    let endIndex = 0;
+    for (let i = 0; i < words.length; i++) {
+      if (PARSER_CONFIG.numberWords.hasOwnProperty(words[i].toLowerCase())) {
+        endIndex = i + 1;
+      } else {
+        break;
+      }
+    }
+
+    let remaining = words.slice(endIndex).join(' ');
+
+    // Check for multipliers
+    const multiplierMatch = remaining.match(/^(pack|packs|pair|pairs|dozen|dozens)\s+(?:of\s+)?(.+)/i);
+    if (multiplierMatch) {
+      const multiplierWord = multiplierMatch[1].toLowerCase();
+      const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
+      return { quantity: wordMatch * multiplier, remaining: cleanRemaining(multiplierMatch[2]) };
+    }
+
+    return { quantity: wordMatch, remaining: cleanRemaining(remaining) };
+  }
+
+  // Pattern 3: Multiplier word with number (e.g., "pack of 6", "dozen AA batteries")
+  const packMatch = text.match(/^(pack|packs|pair|pairs|dozen|dozens)(?:\s+of\s+|\s+|-)(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(.+)/i);
+  if (packMatch) {
+    const multiplierWord = packMatch[1].toLowerCase();
+    const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
+    const numberPart = packMatch[2];
+    const qty = PARSER_CONFIG.numberWords[numberPart.toLowerCase()] || parseFloat(numberPart);
+    return { quantity: qty * multiplier, remaining: cleanRemaining(packMatch[3]) };
+  }
+
+  // Pattern 4: "12-pack AA batteries" / "two-pack filters"
+  const simplePackMatch = text.match(/^(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)-(pack|packs|pair|pairs)\s+(.+)/i);
+  if (simplePackMatch) {
+    const numberPart = simplePackMatch[1];
+    const multiplierWord = simplePackMatch[2].toLowerCase();
+    const qty = PARSER_CONFIG.numberWords[numberPart.toLowerCase()] || parseFloat(numberPart);
+    const multiplier = PARSER_CONFIG.multipliers[multiplierWord] || 1;
+    return { quantity: qty * multiplier, remaining: cleanRemaining(simplePackMatch[3]) };
+  }
+
+  return null;
+}
+
+/**
+ * Extract price from text
+ * Examples:
+ *   "a dollar fifty" → 1.50
+ *   "one fifty" → 1.50
+ *   "a buck fifty" → 1.50
+ *   "one and a quarter" → 1.25
+ *   "ninety-nine cents" → 0.99
+ *   "price 129" → 129.00
+ *   "at 8.50 each" → 8.50
+ */
+function extractPrice(text) {
+  text = text.toLowerCase();
+
+  // Pattern 0A: "one and a quarter" / "one and a half"
+  const andFractionMatch = text.match(/(one|two|three|four|five|six|seven|eight|nine|ten)\s+and\s+a\s+(quarter|half)/i);
+  if (andFractionMatch) {
+    const base = wordsToNumber(andFractionMatch[1]) || 1;
+    const fraction = andFractionMatch[2] === 'quarter' ? 0.25 : 0.5;
+    return base + fraction;
+  }
+
+  // Pattern 0B: "a dollar fifty" / "a dollar and fifty cents"
+  const aDollarMatch = text.match(/(?:a|one)\s+dollar(?:\s+and)?\s+([a-z]+)(?:\s+cents)?/i);
+  if (aDollarMatch) {
+    const cents = wordsToNumber(aDollarMatch[1]);
+    if (cents !== null) {
+      return 1 + (cents / 100);
+    }
+  }
+
+  // Pattern 0C: "a buck fifty" / "buck fifty"
+  const buckMatch = text.match(/(?:a\s+)?bucks?\s+([a-z]+)/i);
+  if (buckMatch) {
+    const cents = wordsToNumber(buckMatch[1]);
+    if (cents !== null) {
+      return 1 + (cents / 100);
+    }
+  }
+
+  // Pattern 0D: "one fifty" / "two fifty" (standalone, no keyword)
+  const oneFiftyMatch = text.match(/\b(one|two|three|four|five|six|seven|eight|nine)\s+(ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:\s+(?:each|per))?\b/i);
+  if (oneFiftyMatch) {
+    const first = wordsToNumber(oneFiftyMatch[1]) || 0;
+    const second = wordsToNumber(oneFiftyMatch[2]) || 0;
+    return first + (second / 100);
+  }
+
+  // Pattern 1: Explicit dollar amount with $ or "dollars"
+  const dollarMatch = text.match(/(?:price|cost|costs|at|for)?\s*\$?(\d+(?:\.\d{1,2})?)\s*(?:dollars?|each|per)?/i);
+  if (dollarMatch) {
+    return parseFloat(dollarMatch[1]);
+  }
+
+  // Pattern 2: Cents
+  const centsMatch = text.match(/(\d+|[a-z\s]+)\s*cents?/i);
+  if (centsMatch) {
+    const numberPart = centsMatch[1].trim();
+    const value = /^\d+$/.test(numberPart) ? parseFloat(numberPart) : wordsToNumber(numberPart);
+    if (value !== null) {
+      return value / 100;
+    }
+  }
+
+  // Pattern 3: Word-based price (e.g., "one twenty-five" = 1.25)
+  const priceKeywords = ['price', 'cost', 'costs', 'at', 'for'];
+  for (const keyword of priceKeywords) {
+    const regex = new RegExp(`${keyword}\\s+([a-z\\s]+?)(?:\\s+(?:dollars?|each|per)|$)`, 'i');
+    const match = text.match(regex);
+    if (match) {
+      const wordsPart = match[1].trim();
+      const value = wordsToNumber(wordsPart);
+      if (value !== null) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Fuzzy match category with Levenshtein distance
+ */
+function fuzzyMatchCategory(text) {
+  const categories = PARSER_CONFIG.categories;
+  const threshold = PARSER_CONFIG.fuzzyMatchThreshold;
+
+  text = text.toLowerCase();
+  let bestMatch = null;
+  let bestScore = 0;
+  let attempted = false;
+
+  for (const category of categories) {
+    const categoryLower = category.toLowerCase();
+
+    // Exact match
+    if (text.includes(categoryLower)) {
+      return { match: category, attempted: true, error: null };
+    }
+
+    // StartsWith match
+    if (categoryLower.startsWith(text) || text.startsWith(categoryLower.substring(0, 4))) {
+      return { match: category, attempted: true, error: null };
+    }
+
+    // Similarity score
+    const score = similarity(text, categoryLower);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = category;
+      attempted = true;
+    }
+  }
+
+  if (bestScore >= threshold) {
+    return { match: bestMatch, attempted: true, error: null };
+  }
+
+  if (attempted) {
+    const categoryList = categories.join(', ');
+    return {
+      match: null,
+      attempted: true,
+      error: `Unknown category. Try one of: ${categoryList}`
+    };
+  }
+
+  return { match: null, attempted: false, error: null };
+}
+
+/**
+ * Fuzzy match type with Levenshtein distance
+ */
+function fuzzyMatchType(text) {
+  const types = PARSER_CONFIG.types;
+  const threshold = PARSER_CONFIG.fuzzyMatchThreshold;
+
+  text = text.toLowerCase();
+  let bestMatch = null;
+  let bestScore = 0;
+  let attempted = false;
+
+  for (const type of types) {
+    const typeLower = type.toLowerCase();
+
+    // Exact match
+    if (text.includes(typeLower)) {
+      return { match: type, attempted: true, error: null };
+    }
+
+    // StartsWith match
+    if (typeLower.startsWith(text) || text.startsWith(typeLower.substring(0, 4))) {
+      return { match: type, attempted: true, error: null };
+    }
+
+    // Similarity score
+    const score = similarity(text, typeLower);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = type;
+      attempted = true;
+    }
+  }
+
+  if (bestScore >= threshold) {
+    return { match: bestMatch, attempted: true, error: null };
+  }
+
+  if (attempted) {
+    const typeList = types.join(', ');
+    return {
+      match: null,
+      attempted: true,
+      error: `Unknown type. Try one of: ${typeList}`
+    };
+  }
+
+  return { match: null, attempted: false, error: null };
+}
+
+/**
+ * Extract part number from text
+ * Look for patterns like M847D, R410A, etc.
+ */
+function extractPartNumber(text) {
+  // Pattern: uppercase letter(s) followed by numbers and possibly more letters/numbers
+  const patterns = [
+    /\b([A-Z]\d{3,}[A-Z]?)\b/,  // M847D, R410A
+    /\b([A-Z]{2,}\d+[A-Z]*)\b/, // MS9540, ABC123
+    /part\s*(?:number|#|num)?\s*:?\s*([A-Za-z0-9-]+)/i, // "part number M847D"
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[1].toUpperCase();
+    }
+  }
+
+  return null;
+}
+
+// ========== MULTI-PART PARSING FUNCTIONS ==========
+
+/**
+ * Infer category from part name keywords using lexicon ONLY
+ * No hardcoded fallbacks - 100% data-driven via lexicon.json
+ */
+function inferCategoryFromName(name, lexicon = LEXICON_CACHE) {
+  if (!name) return null;
+
+  const nameLower = name.toLowerCase();
+
+  // Use lexicon category rules ONLY
+  const categoryRules = lexicon.filter(e => e.kind === 'category' && e.trigger && e.replacement);
+
+  // Find first matching rule (could enhance with scoring later)
+  for (const rule of categoryRules) {
+    if (nameLower.includes(rule.trigger.toLowerCase())) {
+      console.log(`[Category] Matched "${rule.trigger}" → ${rule.replacement}`);
+      return rule.replacement;
+    }
+  }
+
+  // No match found - return null (no hardcoded fallbacks)
+  return null;
+}
+
+/**
+ * Detect if transcription contains multiple distinct parts
+ */
+function detectMultipleParts(transcription) {
+  const text = transcription.toLowerCase();
+
+  // Look for "and" that separates parts (not dimensions or fractions)
+  const segments = [];
+
+  // Split on "and" but be careful
+  const andSplit = transcription.split(/\s+and\s+/i);
+
+  if (andSplit.length === 1) {
+    return { isMultiple: false, segments: [transcription] };
+  }
+
+  // Check each segment to see if it looks like a part description
+  for (let i = 0; i < andSplit.length; i++) {
+    const segment = andSplit[i].trim();
+
+    // Skip if this looks like a fraction context ("one and a half")
+    if (i > 0 && /^(a\s+)?(half|quarter|third)/i.test(segment)) {
+      // Merge with previous
+      if (segments.length > 0) {
+        segments[segments.length - 1] += ' and ' + segment;
+      }
+      continue;
+    }
+
+    // Skip if this looks like dimensional continuation ("by 24 and 2")
+    if (i > 0 && /^\d+\s*$/i.test(segment) && /\d+\s*(x|by)\s*\d+$/i.test(andSplit[i-1])) {
+      // Merge with previous (dimensions like "24 by 24 and 2")
+      if (segments.length > 0) {
+        segments[segments.length - 1] += ' and ' + segment;
+      }
+      continue;
+    }
+
+    // Check if segment has a part-like structure (quantity + noun or technical noun)
+    const hasQuantity = /^\d+|^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|pair|pack)/i.test(segment);
+    const hasNoun = /\b(fuse|filter|battery|batteries|valve|belt|sensor|thermostat|wire|breaker|actuator)\b/i.test(segment);
+
+    if (hasQuantity || hasNoun || segment.length > 5) {
+      segments.push(segment);
+    }
+  }
+
+  return {
+    isMultiple: segments.length > 1,
+    segments: segments.length > 0 ? segments : [transcription]
+  };
+}
+
+/**
+ * Parse a single part phrase segment
+ */
+function parsePartPhrase(segment) {
+  const result = {
+    quantity: null,
+    name: null,
+    category: null,
+    type: null,
+    clarify: null
+  };
+
+  let remainingText = segment.trim();
+
+  // Extract quantity
+  const qtyExtract = extractLeadingQuantity(remainingText);
+  if (qtyExtract) {
+    result.quantity = qtyExtract.quantity;
+    remainingText = qtyExtract.remaining;
+  }
+
+  // Clean up name
+  let cleanedName = remainingText
+    .replace(/^(pack|packs|of|pair|pairs|dozen|dozens)\s+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Battery token detection (using word boundaries to prevent false matches)
+  // Note: lexicon already handles "double a" → "aa battery", "triple a" → "aaa battery"
+  const batteryTokens = ['AAA', 'AA', 'C', 'D', '9V', 'CR2032']; // AAA before AA to match longer first
+  const foundTokens = [];
+
+  for (const token of batteryTokens) {
+    // Use word boundary regex to prevent "AA" matching inside "AAA"
+    const tokenRegex = new RegExp(`\\b${token}\\b`, 'i');
+    if (tokenRegex.test(segment)) {
+      foundTokens.push(token);
+      break; // Only match first/longest token (AAA before AA)
+    }
+  }
+
+  // Handle battery detection (NEVER infer - only use explicitly mentioned types)
+  if (foundTokens.length === 1) {
+    // Normalize battery name
+    const batteryType = foundTokens[0];
+    if (!cleanedName.toLowerCase().includes('batter')) {
+      cleanedName = `${batteryType} battery`;
+    } else {
+      cleanedName = cleanedName.replace(/batter(y|ies)/i, `${batteryType} battery`);
+    }
+  }
+  // REMOVED: Don't ask for clarification if battery type not specified
+  // Just use "battery" as-is and let user specify type in modal
+
+  // Normalize plural to singular
+  if (!result.clarify && cleanedName) {
+    cleanedName = cleanedName
+      .replace(/filters$/i, 'filter')
+      .replace(/fuses$/i, 'fuse')
+      .replace(/batteries$/i, 'battery')
+      .replace(/valves$/i, 'valve')
+      .replace(/sensors$/i, 'sensor')
+      .replace(/belts$/i, 'belt');
+  }
+
+  result.name = cleanedName;
+
+  // Ensure single size token and singular noun (prevents "AA AA battery")
+  // Step 1: Normalize to lowercase for de-duping
+  let normalizedName = result.name.toLowerCase();
+
+  // Step 2: De-dupe repeated size tokens (case-insensitive)
+  const sizeRep = '(aa|aaa|c|d|9v|cr2032)';
+  normalizedName = normalizedName.replace(new RegExp(`\\b(${sizeRep})\\s+\\1\\b`, 'g'), '$1');
+
+  // Step 3: Ensure singular: batteries -> battery
+  normalizedName = normalizedName.replace(/\bbatteries\b/g, 'battery');
+
+  // Step 4: Capitalize size tokens for display consistency
+  result.name = normalizedName
+    .replace(/\baa\b/g, 'AA')
+    .replace(/\baaa\b/g, 'AAA')
+    .replace(/\bc\b/g, 'C')
+    .replace(/\bd\b/g, 'D')
+    .replace(/\b9v\b/g, '9V')
+    .replace(/\bcr2032\b/g, 'CR2032');
+
+  // Infer category
+  result.category = inferCategoryFromName(result.name);
+
+  // Default type
+  result.type = result.category === 'Filters' ? 'Consumable' : 'Inventory';
+
+  // Validation logging: warn if part name is too generic or potentially hallucinated
+  if (!result.name || result.name.trim().length === 0) {
+    console.warn('[Parser] Empty part name detected from segment:', segment);
+  } else if (result.name === 'battery' && !batteryTokens.some(t => segment.toLowerCase().includes(t.toLowerCase()))) {
+    console.warn('[Parser] Generic "battery" without type specified:', segment);
+  }
+
+  // Log parsed part for debugging (QtyGuard diagnostic)
+  console.debug('[QtyGuard] input=', segment, ' parsedQty=', result.quantity, ' name=', result.name);
+
+  return result;
+}
+
+/**
+ * Parse multiple parts from transcription
+ */
+function parseMultipleParts(transcription) {
+  const detection = detectMultipleParts(transcription);
+
+  console.log('[Parser] Multi-part detection:', {
+    isMultiple: detection.isMultiple,
+    segmentCount: detection.segments.length,
+    segments: detection.segments
+  });
+
+  const parts = [];
+  for (const segment of detection.segments) {
+    const parsed = parsePartPhrase(segment);
+    parts.push(parsed);
+  }
+
+  // Summary validation
+  console.log('[Parser] ✓ Final parsed parts:', parts.map(p => ({
+    qty: p.quantity,
+    name: p.name,
+    category: p.category
+  })));
+
+  // Validation: Check for potential hallucinations
+  const partNames = parts.map(p => p.name.toLowerCase());
+  const originalLower = transcription.toLowerCase();
+
+  parts.forEach(part => {
+    if (part.name && !originalLower.includes(part.name.toLowerCase().split(' ')[0])) {
+      console.warn('[Parser] ⚠️ Potential hallucination - part not in original text:', {
+        detected: part.name,
+        original: transcription
+      });
+    }
+  });
+
+  return parts;
+}
+
+/**
+ * Render detected parts list for transcript drawer
+ */
+function renderDetectedList(parts) {
+  if (!parts || parts.length === 0) return '';
+
+  let output = 'Detected parts:\n\n';
+  parts.forEach((part, i) => {
+    const qty = part.quantity || '?';
+    const name = part.name || 'unknown';
+    const cat = part.category || 'Other';
+    output += `${i + 1}. ${qty} × ${name} (${cat})`;
+    if (part.clarify) {
+      output += ` [needs clarification]`;
+    }
+    output += '\n';
+  });
+  return output;
+}
+
+/**
+ * Render short format for pill display
+ */
+function renderShort(part) {
+  if (!part) return '';
+  const qty = part.quantity || 1;
+  const name = part.name || 'part';
+  return `${qty} × ${name}`;
+}
+
+// ========== DB LOOKUP NORMALIZATION HELPERS ==========
+
+/**
+ * Normalize a part name for DB lookup (qty-free, lowercase, singularized)
+ * @param {string} rawName - Raw part name (may include quantity tokens)
+ * @returns {string} Normalized name for lookup
+ */
+function normalizeNameForLookup(rawName) {
+  if (!rawName || typeof rawName !== 'string') return '';
+
+  let normalized = rawName.toLowerCase().trim();
+
+  // Collapse multiple spaces
+  normalized = normalized.replace(/\s+/g, ' ');
+
+  // Remove leading quantity tokens (defensive - should already be removed)
+  // Match patterns like: "4 ", "12 ", "pack of ", "6-pack ", etc.
+  normalized = normalized.replace(/^\d+\s+/, ''); // "4 fuses" → "fuses"
+  normalized = normalized.replace(/^\d+-pack\s+/, ''); // "12-pack batteries" → "batteries"
+  normalized = normalized.replace(/^pack\s+of\s+\d+\s+/, ''); // "pack of 6 filters" → "filters"
+
+  // Singularize common plurals
+  const pluralMap = {
+    'filters': 'filter',
+    'fuses': 'fuse',
+    'batteries': 'battery',
+    'breakers': 'breaker',
+    'capacitors': 'capacitor',
+    'contactors': 'contactor',
+    'thermostats': 'thermostat',
+    'sensors': 'sensor',
+    'valves': 'valve',
+    'belts': 'belt',
+    'bearings': 'bearing',
+    'motors': 'motor',
+    'compressors': 'compressor',
+    'coils': 'coil',
+    'fans': 'fan'
+  };
+
+  // Replace plural with singular if exact match
+  Object.keys(pluralMap).forEach(plural => {
+    const singular = pluralMap[plural];
+    // Use word boundary to avoid partial replacements
+    const regex = new RegExp(`\\b${plural}\\b`, 'gi');
+    normalized = normalized.replace(regex, singular);
+  });
+
+  return normalized.trim();
+}
+
+/**
+ * Create a DB lookup key from part info
+ * @param {Object} partInfo - {name: string, partNumber?: string}
+ * @returns {string} Lookup key for DB matching
+ */
+function makeDbLookupKey({ name, partNumber }) {
+  const normalizedName = normalizeNameForLookup(name || '');
+  if (partNumber && partNumber.trim()) {
+    return `${normalizedName}|${partNumber.trim()}`;
+  }
+  return normalizedName;
+}
+
+/**
+ * Convert a string part (possibly with quantity) into a chip object
+ * @param {string} partString - Raw part string (e.g., "4 600V 30A fuses")
+ * @returns {Object} Chip object {name, quantity, lookupKey, text}
+ */
+function stringToChip(partString) {
+  if (!partString || typeof partString !== 'string') {
+    return { name: '', quantity: 1, lookupKey: '', text: partString };
+  }
+
+  const text = partString.trim();
+
+  // Parse using existing parsePartPhrase logic
+  const parsed = parsePartPhrase(text);
+
+  const chip = {
+    name: parsed.name || text,
+    quantity: parsed.quantity || 1,
+    lookupKey: normalizeNameForLookup(parsed.name || text),
+    text: text // Original utterance
+  };
+
+  // Guard: never let a dimension number override quantity
+  const DIM_RX = /\b\d{1,3}\s*(x|×|\*)\s*\d{1,3}(\s*(x|×|\*)\s*\d{1,3})?\b/i;
+  if (DIM_RX.test(chip.name)) {
+    // Dimension detected in name - quantity stays whatever the parser set or default 1
+    // (quantity should come from leading words like "four 24x24x2 filters", not from "24")
+  }
+
+  console.debug('[Chip]', chip);
+
+  return chip;
+}
+
+// ========== QUEUE MANAGEMENT FUNCTIONS ==========
+
+/**
+ * Load current queued part into modal form
+ */
+function loadQueuedPartIntoModal() {
+  if (pendingPartIndex >= pendingPartsQueue.length) {
+    showCompactPill('✓ All parts processed', '', { showView: false });
+    setTimeout(() => hideCompactPill(), 3000);
+    pendingPartsQueue = [];
+    pendingPartIndex = 0;
+    return;
+  }
+
+  const part = pendingPartsQueue[pendingPartIndex];
+
+  console.log(`[Queue] Loading part ${pendingPartIndex + 1}/${pendingPartsQueue.length}:`, part);
+
+  // If this part needs clarification, show it and wait
+  if (part.clarify) {
+    const clarifyMsg = part.clarify;
+    const buttons = [];
+
+    // Add clarification choice buttons if it's a battery question
+    if (clarifyMsg.includes('AA') || clarifyMsg.includes('AAA')) {
+      showCompactPill('❓ Need clarification', clarifyMsg, {
+        showView: true,
+        clarificationChoices: ['AA', 'AAA', 'C', 'D', '9V', 'CR2032']
+      });
+    } else {
+      showCompactPill('❓ Need clarification', clarifyMsg, { showView: true });
+    }
+    return;
+  }
+
+  // Fill form with part data
+  document.getElementById('partName').value = part.name || '';
+  document.getElementById('partQuantity').value = part.quantity || 1;
+  document.getElementById('partCategory').value = part.category || '';
+  document.getElementById('partType').value = part.type || 'Inventory';
+
+  // Don't touch price, description, common uses - those are for follow-up recordings
+
+  // Show progress in pill
+  const remaining = pendingPartsQueue.length - pendingPartIndex - 1;
+  if (remaining > 0) {
+    showCompactPill(
+      `Part ${pendingPartIndex + 1}/${pendingPartsQueue.length}`,
+      `Loaded: ${renderShort(part)}`,
+      { showView: true, showNext: true, showSkip: true }
+    );
+  } else {
+    showCompactPill(
+      `Part ${pendingPartIndex + 1}/${pendingPartsQueue.length} (last)`,
+      `Loaded: ${renderShort(part)}`,
+      { showView: true }
+    );
+  }
+}
+
+/**
+ * Advance to next part in queue
+ */
+function handleNextPart() {
+  console.log('[Queue] Next clicked');
+  pendingPartIndex++;
+  loadQueuedPartIntoModal();
+}
+
+/**
+ * Skip current part
+ */
+function handleSkipPart() {
+  console.log('[Queue] Skip clicked');
+  pendingPartIndex++;
+  loadQueuedPartIntoModal();
+}
+
+/**
+ * Handle clarification choice (e.g., selecting "AA" for battery)
+ */
+function handleClarificationChoice(choice) {
+  console.log('[Queue] Clarification choice:', choice);
+
+  if (pendingPartIndex >= pendingPartsQueue.length) return;
+
+  const part = pendingPartsQueue[pendingPartIndex];
+
+  // Resolve the ambiguity
+  if (part.clarify && part.clarify.includes('battery')) {
+    part.name = `${choice} battery`;
+    part.category = 'Electrical';
+    part.type = 'Consumable';
+    delete part.clarify;
+
+    // Now load it
+    loadQueuedPartIntoModal();
+  }
+}
+
+/**
+ * Main parser: Extract structured data from spoken transcription
+ * @param {string} transcription - Raw voice transcription
+ * @param {object} currentFields - Current form field values (for incremental merge)
+ * @returns {object} Parsed data with quantity, name, category, type, price, etc.
+ */
+function parseSpokenPart(transcription, currentFields = {}) {
+  // Initialize result with current field values (MERGE mode)
+  const result = {
+    quantity: currentFields.quantity || null,
+    name: currentFields.name || null,
+    category: currentFields.category || null,
+    type: currentFields.type || null,
+    price: currentFields.price || null,
+    partNumber: currentFields.partNumber || null,
+    description: currentFields.description || null,
+    commonUses: currentFields.commonUses || null,
+    errors: [],
+    changedFields: [] // Track which fields were updated in this parse
+  };
+
+  let remainingText = transcription.trim();
+
+  // Special command: "reset fields"
+  if (/reset\s+fields?|clear\s+all|start\s+over/i.test(transcription)) {
+    return {
+      quantity: null,
+      name: null,
+      category: null,
+      type: null,
+      price: null,
+      partNumber: null,
+      description: null,
+      commonUses: null,
+      errors: [],
+      changedFields: ['ALL'],
+      resetCommand: true
+    };
+  }
+
+  // 1. Extract leading quantity
+  const qtyExtract = extractLeadingQuantity(remainingText);
+  if (qtyExtract) {
+    if (result.quantity !== qtyExtract.quantity) {
+      result.quantity = qtyExtract.quantity;
+      result.changedFields.push('quantity');
+    }
+    remainingText = qtyExtract.remaining;
+  }
+
+  // 2. Extract price
+  const priceExtract = extractPrice(transcription);
+  if (priceExtract !== null) {
+    if (result.price !== priceExtract) {
+      result.price = priceExtract;
+      result.changedFields.push('price');
+    }
+  }
+
+  // 3. Extract category
+  const categoryMatch = fuzzyMatchCategory(transcription);
+  if (categoryMatch.match) {
+    if (result.category !== categoryMatch.match) {
+      result.category = categoryMatch.match;
+      result.changedFields.push('category');
+    }
+  } else if (categoryMatch.error) {
+    result.errors.push(categoryMatch.error);
+  }
+
+  // 4. Extract type
+  const typeMatch = fuzzyMatchType(transcription);
+  if (typeMatch.match) {
+    if (result.type !== typeMatch.match) {
+      result.type = typeMatch.match;
+      result.changedFields.push('type');
+    }
+  } else if (typeMatch.error) {
+    result.errors.push(typeMatch.error);
+  }
+
+  // 5. Extract part number
+  const partNumExtract = extractPartNumber(transcription);
+  if (partNumExtract) {
+    if (result.partNumber !== partNumExtract) {
+      result.partNumber = partNumExtract;
+      result.changedFields.push('partNumber');
+    }
+  }
+
+  // 6. Name normalization and battery detection
+  if (remainingText.length > 0) {
+    // Clean up name: remove pack/quantity remnants
+    let cleanedName = remainingText
+      .replace(/^(pack|packs|of|pair|pairs|dozen|dozens)\s+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Battery token detection
+    const batteryTokens = ['AA', 'AAA', 'C', 'D', '9V', 'CR2032'];
+    const foundTokens = [];
+    const lowerText = transcription.toLowerCase();
+
+    for (const token of batteryTokens) {
+      const tokenLower = token.toLowerCase();
+      // Check for explicit mentions like "AA batteries" or "triple A"
+      if (lowerText.includes(tokenLower) ||
+          (token === 'AAA' && (lowerText.includes('triple a') || lowerText.includes('triple-a'))) ||
+          (token === 'AA' && (lowerText.includes('double a') || lowerText.includes('double-a')))) {
+        foundTokens.push(token);
+      }
+    }
+
+    // Clarification check: multiple battery sizes or ambiguous
+    if (foundTokens.length > 1) {
+      result.clarify = `Did you mean "${foundTokens[0]} batteries" or "${foundTokens[1]} batteries"?`;
+    } else if (foundTokens.length === 1) {
+      // Single battery type found - normalize name
+      if (!cleanedName.toLowerCase().includes('batter')) {
+        cleanedName = `${foundTokens[0]} batteries`;
+      } else if (!cleanedName.includes(foundTokens[0])) {
+        cleanedName = cleanedName.replace(/batter(y|ies)/i, `${foundTokens[0]} batteries`);
+      }
+    } else if (/batter(y|ies)/i.test(cleanedName) && !foundTokens.length) {
+      // Generic "batteries" without size
+      result.clarify = 'Which battery size? (AA, AAA, C, D, 9V, CR2032)';
+    }
+
+    // Update name if changed and not asking for clarification about it
+    if (cleanedName.length > 0 && (!result.name || cleanedName !== result.name) && !result.clarify) {
+      result.name = cleanedName;
+      result.changedFields.push('name');
+    }
+  }
+
+  // 7. Description discipline - only set with explicit cue
+  const descriptionCues = ['description', 'note', 'notes', 'details', 'detail'];
+  for (const cue of descriptionCues) {
+    const regex = new RegExp(`\\b${cue}[:\\s]+(.+)`, 'i');
+    const match = transcription.match(regex);
+    if (match) {
+      const desc = match[1].trim();
+      if (result.description !== desc) {
+        result.description = desc;
+        result.changedFields.push('description');
+      }
+      break;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Calculate confidence score for parsed data
+ * Returns value between 0 and 1
+ */
+function calculateParseConfidence(parsedData) {
+  let score = 0;
+  let maxScore = 5;
+
+  // Required fields
+  if (parsedData.name) score += 1;
+  if (parsedData.category) score += 1;
+  if (parsedData.type) score += 1;
+
+  // Optional but valuable fields
+  if (parsedData.price !== null) score += 1;
+  if (parsedData.partNumber) score += 0.5;
+
+  // Penalties
+  if (parsedData.errors.length > 0) {
+    score -= parsedData.errors.length * 0.3;
+  }
+
+  const confidence = Math.max(0, Math.min(1, score / maxScore));
+  return confidence;
+}
 
 // LocalStorage persistence functions
 function saveRepairsToLocalStorage() {
@@ -78,6 +1319,12 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Load saved repairs
   loadRepairsFromLocalStorage();
+
+  // Load lexicon from server
+  fetchLexicon();
+
+  // Periodic lexicon refresh (every 5 minutes for hot-reload)
+  setInterval(fetchLexicon, 5 * 60 * 1000);
 });
 
 // Push-to-talk functionality - context-aware
@@ -128,21 +1375,10 @@ if (addPartForm) {
 }
 
 // Toggle transcription viewer
-const toggleTranscriptionBtn = document.getElementById('toggleTranscription');
-if (toggleTranscriptionBtn) {
-  toggleTranscriptionBtn.addEventListener('click', () => {
-    const transcriptionText = document.getElementById('modalTranscriptionText');
-    if (transcriptionText) {
-      const isHidden = transcriptionText.classList.contains('hidden');
-      if (isHidden) {
-        transcriptionText.classList.remove('hidden');
-        toggleTranscriptionBtn.textContent = 'Hide';
-      } else {
-        transcriptionText.classList.add('hidden');
-        toggleTranscriptionBtn.textContent = 'Show';
-      }
-    }
-  });
+// Compact pill view button - toggles transcript drawer
+const pillViewBtn = document.getElementById('pillViewBtn');
+if (pillViewBtn) {
+  pillViewBtn.addEventListener('click', toggleTranscriptDrawer);
 }
 
 // Keyboard toggle functionality
@@ -230,20 +1466,36 @@ async function handleFloatingSubmit() {
 function contextAwareStartRecording() {
   // Check if Add Part modal is open
   const addPartModal = document.getElementById('addPartModal');
-  if (addPartModal && !addPartModal.classList.contains('hidden')) {
+  const isModalOpen = addPartModal && !addPartModal.classList.contains('hidden');
+
+  console.log('Context-aware start recording:', {
+    modalOpen: isModalOpen,
+    currentPartToAdd: currentPartToAdd
+  });
+
+  if (isModalOpen) {
     // Modal is open - record for part details
+    console.log('Starting modal recording for part:', currentPartToAdd);
     startModalRecording();
   } else {
     // Normal repair notes recording
+    console.log('Starting normal repair recording');
     startRecording();
   }
 }
 
 function contextAwareStopRecording() {
+  console.log('Context-aware stop recording:', {
+    isModalRecording: isModalRecording,
+    isRecording: isRecording
+  });
+
   // Check which type of recording is active
   if (isModalRecording) {
+    console.log('Stopping modal recording');
     stopModalRecording();
   } else if (isRecording) {
+    console.log('Stopping normal recording');
     stopRecording();
   }
 }
@@ -721,11 +1973,26 @@ function displayResults(result) {
 
   if (result.repairs && result.repairs.length > 0) {
     // Store raw transcription with each repair for context
-    const repairsWithContext = result.repairs.map(repair => ({
-      ...repair,
-      raw_transcription: result.raw_transcription,
-      normalized_transcription: result.transcription
-    }));
+    const repairsWithContext = result.repairs.map(repair => {
+      // Convert string parts to chip objects
+      let partsChips = repair.parts || [];
+      if (Array.isArray(partsChips)) {
+        partsChips = partsChips.map(part => {
+          // If already an object, keep it; otherwise convert string to chip
+          if (typeof part === 'string') {
+            return stringToChip(part);
+          }
+          return part;
+        });
+      }
+
+      return {
+        ...repair,
+        parts: partsChips,
+        raw_transcription: result.raw_transcription,
+        normalized_transcription: result.transcription
+      };
+    });
 
     // APPEND new repairs to existing ones instead of replacing
     currentRepairs.push(...repairsWithContext);
@@ -1549,15 +2816,24 @@ async function renderRepairs() {
 }
 
 async function checkPartsInDatabase() {
-  // Collect all unique parts from all repairs
-  const allParts = new Set();
+  // Collect all unique lookupKeys from all repairs
+  const allLookupKeys = new Set();
   currentRepairs.forEach(repair => {
     if (repair.parts && repair.parts.length > 0) {
-      repair.parts.forEach(part => allParts.add(part));
+      repair.parts.forEach(part => {
+        // Handle both old string format and new chip object format
+        if (typeof part === 'string') {
+          // Convert to chip first
+          const chip = stringToChip(part);
+          allLookupKeys.add(chip.lookupKey);
+        } else if (part && part.lookupKey) {
+          allLookupKeys.add(part.lookupKey);
+        }
+      });
     }
   });
 
-  if (allParts.size === 0) return;
+  if (allLookupKeys.size === 0) return;
 
   try {
     const response = await fetch('/api/parts/check', {
@@ -1565,13 +2841,14 @@ async function checkPartsInDatabase() {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ parts: Array.from(allParts) })
+      body: JSON.stringify({ parts: Array.from(allLookupKeys) })
     });
 
     if (response.ok) {
       const data = await response.json();
       partsStatus = {};
       data.results.forEach(result => {
+        // Store by lookupKey (normalized) instead of raw string
         partsStatus[result.part] = result.exists;
       });
     }
@@ -1639,19 +2916,31 @@ function createRepairCard(repair, index) {
     const partsList = document.createElement('div');
     partsList.className = 'list-items';
     repair.parts.forEach(part => {
+      // Handle both old string format and new chip object format
+      let chip;
+      if (typeof part === 'string') {
+        chip = stringToChip(part);
+      } else {
+        chip = part;
+      }
+
       const partWrapper = document.createElement('div');
       partWrapper.className = 'part-item-wrapper';
 
       const partItem = document.createElement('span');
       partItem.className = 'list-item';
 
-      // Check if part is in database
-      const isInDatabase = partsStatus[part];
+      // Check if part is in database using lookupKey
+      const isInDatabase = partsStatus[chip.lookupKey];
       if (isInDatabase === false) {
         partItem.classList.add('part-not-in-database');
       }
 
-      partItem.textContent = part;
+      // Display with quantity (e.g., "4 × 600V 30A fuse")
+      const displayText = chip.quantity > 1
+        ? `${chip.quantity} × ${chip.name}`
+        : chip.name;
+      partItem.textContent = displayText;
       partWrapper.appendChild(partItem);
 
       // Add "Not in DB" badge and button if part is not in database
@@ -1666,7 +2955,7 @@ function createRepairCard(repair, index) {
         addBtn.textContent = '+ Add';
         addBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          openAddPartModal(part);
+          openAddPartModal(chip);
         });
         partWrapper.appendChild(addBtn);
       }
@@ -1774,7 +3063,14 @@ function createRepairCard(repair, index) {
       minusBtn.style.padding = '0';
       minusBtn.addEventListener('click', () => {
         if (part.quantity > 1) {
+          const oldQty = part.quantity;
           part.quantity -= 1;
+
+          // Log correction if this is an auto-matched part with voice context
+          if (part.auto_matched && part._parsedQuantity !== undefined && part.quantity !== part._parsedQuantity) {
+            logCorrection('quantity', part._parsedQuantity, part.quantity, part.original_text, part.original_text);
+          }
+
           saveRepairsToLocalStorage(); // Persist quantity change
           renderRepairs();
         } else {
@@ -1796,9 +3092,17 @@ function createRepairCard(repair, index) {
       qtyInput.style.padding = '4px';
       qtyInput.style.fontSize = '0.85rem';
       qtyInput.addEventListener('change', (e) => {
+        const oldQty = part.quantity;
         const newQty = parseInt(e.target.value);
+
         if (!isNaN(newQty) && newQty > 0) {
           part.quantity = newQty;
+
+          // Log correction if this is an auto-matched part with voice context
+          if (part.auto_matched && part._parsedQuantity !== undefined && oldQty !== newQty) {
+            logCorrection('quantity', part._parsedQuantity, newQty, part.original_text, part.original_text);
+          }
+
           saveRepairsToLocalStorage(); // Persist quantity change
           renderRepairs();
         } else if (newQty === 0) {
@@ -1826,7 +3130,14 @@ function createRepairCard(repair, index) {
       plusBtn.style.lineHeight = '1';
       plusBtn.style.padding = '0';
       plusBtn.addEventListener('click', () => {
+        const oldQty = part.quantity;
         part.quantity += 1;
+
+        // Log correction if this is an auto-matched part with voice context
+        if (part.auto_matched && part._parsedQuantity !== undefined && part.quantity !== part._parsedQuantity) {
+          logCorrection('quantity', part._parsedQuantity, part.quantity, part.original_text, part.original_text);
+        }
+
         saveRepairsToLocalStorage(); // Persist quantity change
         renderRepairs();
       });
@@ -1880,7 +3191,14 @@ function editRepair(index) {
   const problem = prompt('Problem:', repair.problem || '');
   if (problem === null) return;
 
-  const partsStr = prompt('Parts (comma-separated):', (repair.parts || []).join(', '));
+  // Convert chips to display text for editing
+  const partsDisplayText = (repair.parts || []).map(part => {
+    if (typeof part === 'string') return part;
+    // For chip objects, show "qty × name"
+    return part.quantity > 1 ? `${part.quantity} × ${part.name}` : part.name;
+  }).join(', ');
+
+  const partsStr = prompt('Parts (comma-separated):', partsDisplayText);
   if (partsStr === null) return;
 
   const actionsStr = prompt('Actions (comma-separated):', (repair.actions || []).join(', '));
@@ -1889,11 +3207,11 @@ function editRepair(index) {
   const notes = prompt('Notes:', repair.notes || '');
   if (notes === null) return;
 
-  // Update the repair
+  // Update the repair - convert string parts to chips
   currentRepairs[index] = {
     equipment: equipment.trim(),
     problem: problem.trim(),
-    parts: partsStr.split(',').map(p => p.trim()).filter(p => p),
+    parts: partsStr.split(',').map(p => p.trim()).filter(p => p).map(p => stringToChip(p)),
     actions: actionsStr.split(',').map(a => a.trim()).filter(a => a),
     notes: notes.trim()
   };
@@ -1930,7 +3248,7 @@ function addNewRepair() {
   const newRepair = {
     equipment: equipment.trim(),
     problem: problem.trim(),
-    parts: partsStr.split(',').map(p => p.trim()).filter(p => p),
+    parts: partsStr.split(',').map(p => p.trim()).filter(p => p).map(p => stringToChip(p)),
     actions: actionsStr.split(',').map(a => a.trim()).filter(a => a),
     notes: notes.trim()
   };
@@ -2107,12 +3425,26 @@ function removePartFromRepair(repairIndex, partNumber) {
 
 // ========== ADD PART MODAL FUNCTIONS ==========
 
-function openAddPartModal(partName) {
-  currentPartToAdd = partName;
+function openAddPartModal(partOrChip) {
+  // Handle both old string format and new chip object format
+  let chip;
+  if (typeof partOrChip === 'string') {
+    chip = stringToChip(partOrChip);
+  } else {
+    chip = partOrChip;
+  }
+
+  // Store the chip for reference
+  currentPartToAdd = chip.name;
+
+  // Prefill from chip fields (not reparse text)
   const partNameInput = document.getElementById('partName');
   if (partNameInput) {
-    partNameInput.value = partName;
+    partNameInput.value = chip.name || '';
   }
+
+  // Prefill quantity from chip
+  document.getElementById('partQuantity').value = chip.quantity || 1;
 
   const addPartModal = document.getElementById('addPartModal');
   if (addPartModal) {
@@ -2123,7 +3455,7 @@ function openAddPartModal(partName) {
   const floatingMicLabel = document.getElementById('floatingMicLabel');
   const floatingMicLabelText = document.getElementById('floatingMicLabelText');
   if (floatingMicLabel && floatingMicLabelText) {
-    floatingMicLabelText.textContent = `🎙️ Recording Part Details for "${partName}"`;
+    floatingMicLabelText.textContent = `🎙️ Recording Part Details for "${chip.name}"`;
     floatingMicLabel.classList.remove('hidden');
   }
 
@@ -2134,6 +3466,9 @@ function openAddPartModal(partName) {
   document.getElementById('partPrice').value = '';
   document.getElementById('partDescription').value = '';
   document.getElementById('partCommonUses').value = '';
+
+  // Clear field history for undo functionality
+  modalFieldHistory = {};
 }
 
 function closeAddPartModal() {
@@ -2154,14 +3489,10 @@ function closeAddPartModal() {
     stopModalRecording();
   }
 
-  // Hide AI status indicator
-  hideModalAiStatus();
-
-  // Hide transcription section
-  const transcriptionSection = document.getElementById('modalTranscription');
-  if (transcriptionSection) {
-    transcriptionSection.classList.add('hidden');
-  }
+  // Hide all modal UI elements
+  hideCompactPill();
+  hideDropdownHints();
+  hideTranscriptDrawer();
 }
 
 async function startModalRecording() {
@@ -2201,8 +3532,11 @@ async function startModalRecording() {
       floatingMic.classList.add('recording');
     }
 
-    // Show AI status indicator
-    showModalAiStatus('🎤 Recording...', 'Speak now to describe the part');
+    // Show dropdown hints while recording
+    showDropdownHints();
+
+    // Show compact pill
+    showCompactPill('🎤 Recording...', 'Speak now to describe the part');
 
   } catch (error) {
     console.error('Error starting modal recording:', error);
@@ -2222,8 +3556,11 @@ function stopModalRecording() {
       floatingMic.classList.remove('recording');
     }
 
+    // Hide dropdown hints after a short delay
+    hideDropdownHints(3000);
+
     // Show processing status
-    showModalAiStatus('⏳ Processing audio...', 'Converting to text');
+    showCompactPill('⏳ Processing audio...', 'Converting to text');
   }
 }
 
@@ -2236,88 +3573,199 @@ async function processModalAudio(audioBlob) {
     const wavBlob = await audioBufferToWav(audioBuffer);
     const base64Audio = await blobToBase64(wavBlob);
 
-    // Send to backend to parse part details
-    showModalAiStatus('🤖 AI is analyzing...', 'Extracting part details from your description');
+    // Step 1: Get transcription from Whisper
+    showCompactPill('⏳ Transcribing...', '');
 
-    const response = await fetch('/api/parts/parse-details', {
+    const transcribeResponse = await fetch('/api/parts/parse-details', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         audio: base64Audio,
         partName: currentPartToAdd
       })
     });
 
-    if (!response.ok) {
-      throw new Error('Failed to parse part details');
+    if (!transcribeResponse.ok) {
+      throw new Error('Failed to transcribe audio');
     }
 
-    const result = await response.json();
+    const transcribeResult = await transcribeResponse.json();
+    const rawTranscription = String(transcribeResult.transcription || '');
 
-    console.log('Parse details result:', result); // Debug log
+    console.log('[Transcription] Raw:', rawTranscription);
 
-    // Show raw transcription
-    if (result.transcription) {
-      const transcriptionSection = document.getElementById('modalTranscription');
-      const transcriptionText = document.getElementById('modalTranscriptionText');
-      const toggleBtn = document.getElementById('toggleTranscription');
+    // Step 1.5: Normalize transcription using lexicon
+    const transcription = normalizeTranscript(rawTranscription);
 
-      if (transcriptionSection && transcriptionText) {
-        // Convert to string explicitly
-        const transcriptionString = String(result.transcription);
-        transcriptionText.textContent = transcriptionString;
-        transcriptionText.classList.remove('hidden');
-        transcriptionSection.classList.remove('hidden');
-        if (toggleBtn) {
-          toggleBtn.textContent = 'Hide';
+    console.log('[Transcription] Normalized:', transcription);
+
+    // Update pill with transcript snippet and View button
+    showCompactPill('🤖 Parsing...', transcription, { showView: true });
+
+    // Step 2: Detect and parse multiple parts
+    const detectedParts = parseMultipleParts(transcription);
+
+    console.log('[Multi-Part] Detected parts:', detectedParts);
+
+    // Update transcript drawer with both raw and normalized transcription + detected parts
+    const drawerContent = `Raw: ${rawTranscription}\nNormalized: ${transcription}\n\n${renderDetectedList(detectedParts)}`;
+    showTranscriptDrawer(drawerContent);
+
+    // If multiple parts detected or single part, queue them
+    pendingPartsQueue = detectedParts;
+    pendingPartIndex = 0;
+
+    console.log('[Multi-Part] Queue initialized with', pendingPartsQueue.length, 'part(s)');
+
+    // Load first part into modal
+    loadQueuedPartIntoModal();
+    return; // Skip old single-part flow
+
+    // Check for reset command
+    if (parsedData.resetCommand) {
+      showCompactPill('🔄 Resetting fields...', '');
+      document.getElementById('partName').value = currentPartToAdd;
+      document.getElementById('partNumber').value = '';
+      document.getElementById('partCategory').value = '';
+      document.getElementById('partType').value = '';
+      document.getElementById('partQuantity').value = '1';
+      document.getElementById('partPrice').value = '';
+      document.getElementById('partDescription').value = '';
+      document.getElementById('partCommonUses').value = '';
+
+      setTimeout(() => {
+        showCompactPill('✓ Fields reset', '');
+        setTimeout(() => hideCompactPill(), 2000);
+      }, 500);
+      return;
+    }
+
+    // Step 4: Calculate confidence
+    const confidence = calculateParseConfidence(parsedData);
+    console.log('Parse confidence:', confidence);
+
+    // Step 5: Decide if we need GPT-4 validation
+    const needsValidation = PARSER_CONFIG.useServerValidation &&
+                           (confidence < PARSER_CONFIG.confidenceThreshold || parsedData.errors.length > 0);
+
+    let finalData = parsedData;
+
+    if (needsValidation) {
+      console.log('Low confidence or errors - requesting GPT-4 validation');
+      showCompactPill('🤖 AI validating...', transcription, { showView: true });
+
+      // Send client-parsed data to server for GPT-4 enhancement
+      const validateResponse = await fetch('/api/parts/parse-details', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: transcription,
+          partName: currentPartToAdd,
+          clientParsed: parsedData,
+          currentFields: currentFields
+        })
+      });
+
+      if (validateResponse.ok) {
+        const validateResult = await validateResponse.json();
+        if (validateResult.partDetails) {
+          // Merge server validation with client parsing
+          finalData = { ...parsedData, ...validateResult.partDetails };
+          console.log('GPT-4 enhanced data:', finalData);
         }
       }
     }
 
-    // Fill form with extracted details
-    if (result.partDetails) {
-      showModalAiStatus('✨ Populating fields...', 'AI is filling in the form');
-
-      // Animate the field population with slight delays
-      setTimeout(() => {
-        document.getElementById('partName').value = result.partDetails.name || currentPartToAdd;
-      }, 100);
-      setTimeout(() => {
-        document.getElementById('partNumber').value = result.partDetails.part_number || '';
-      }, 200);
-      setTimeout(() => {
-        document.getElementById('partCategory').value = result.partDetails.category || '';
-      }, 300);
-      setTimeout(() => {
-        document.getElementById('partType').value = result.partDetails.type || '';
-      }, 400);
-      setTimeout(() => {
-        document.getElementById('partPrice').value = result.partDetails.price || '';
-      }, 500);
-      setTimeout(() => {
-        document.getElementById('partDescription').value = result.partDetails.description || '';
-      }, 600);
-      setTimeout(() => {
-        document.getElementById('partCommonUses').value = result.partDetails.common_uses || '';
-      }, 700);
-
-      // Show success and hide after delay
-      setTimeout(() => {
-        showModalAiStatus('✓ Details extracted!', 'Review the information below', true);
-        setTimeout(() => {
-          hideModalAiStatus();
-        }, 3000);
-      }, 800);
+    // Step 6: Show errors if any
+    if (parsedData.errors.length > 0) {
+      console.warn('Parse errors:', parsedData.errors);
+      showCompactPill('⚠️ Warning', parsedData.errors[0], { showView: true });
+      // Continue anyway - user can fix manually
     }
+
+    // Step 7: Incremental field updates with animation and tracking
+    showCompactPill('✨ Updating fields...', transcription, { showView: true });
+
+    const fieldMappings = {
+      'partName': { value: finalData.name, displayName: 'Name' },
+      'partNumber': { value: finalData.partNumber, displayName: 'Part Number' },
+      'partCategory': { value: finalData.category, displayName: 'Category' },
+      'partType': { value: finalData.type, displayName: 'Type' },
+      'partQuantity': { value: finalData.quantity, displayName: 'Quantity' },
+      'partPrice': { value: finalData.price, displayName: 'Price' },
+      'partDescription': { value: finalData.description, displayName: 'Description' },
+      'partCommonUses': { value: finalData.commonUses, displayName: 'Common Uses' }
+    };
+
+    let firstChangedField = null;
+    const updatedFields = [];
+
+    // Update fields with delay for visual effect
+    let delay = 100;
+    for (const [fieldId, fieldData] of Object.entries(fieldMappings)) {
+      if (fieldData.value !== null && fieldData.value !== undefined && fieldData.value !== '') {
+        const currentValue = currentFields[fieldId.replace('part', '').toLowerCase()] ||
+                            currentFields[fieldId.replace('part', '').replace(/([A-Z])/g, '$1').toLowerCase()];
+
+        // Only update if value changed
+        if (String(fieldData.value) !== String(currentValue)) {
+          setTimeout(() => {
+            const fieldElement = document.getElementById(fieldId);
+            if (fieldElement) {
+              // Save to history for undo
+              if (!modalFieldHistory[fieldId]) {
+                modalFieldHistory[fieldId] = [];
+              }
+              modalFieldHistory[fieldId].push({
+                oldValue: fieldElement.value,
+                newValue: String(fieldData.value),
+                timestamp: Date.now()
+              });
+
+              fieldElement.value = fieldData.value;
+
+              // Visual flash effect
+              fieldElement.style.backgroundColor = '#dbeafe';
+              setTimeout(() => {
+                fieldElement.style.backgroundColor = '';
+              }, 500);
+            }
+          }, delay);
+
+          if (!firstChangedField) {
+            firstChangedField = fieldId;
+          }
+          updatedFields.push(fieldData.displayName);
+          delay += 100;
+        }
+      }
+    }
+
+    // Step 8: Show result and scroll to first changed field
+    setTimeout(() => {
+      if (updatedFields.length > 0) {
+        const summary = updatedFields.join(', ');
+        showCompactPill(`✓ Updated: ${summary}`, transcription, { showView: true });
+
+        // Scroll to first changed field
+        if (firstChangedField) {
+          const fieldElement = document.getElementById(firstChangedField);
+          if (fieldElement) {
+            fieldElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      } else {
+        showCompactPill('ℹ️ No changes detected', transcription, { showView: true });
+      }
+
+      // Auto-hide pill after delay
+      setTimeout(() => hideCompactPill(), 4000);
+    }, delay + 200);
 
   } catch (error) {
     console.error('Error processing modal audio:', error);
-    showModalAiStatus('❌ Error processing audio', 'Please fill in the fields manually', true);
-    setTimeout(() => {
-      hideModalAiStatus();
-    }, 3000);
+    showCompactPill('❌ Error', 'Could not process audio. Please try again.', { showView: false });
+    setTimeout(() => hideCompactPill(), 3000);
   }
 }
 
@@ -2329,6 +3777,7 @@ async function handleAddPart(e) {
     part_number: document.getElementById('partNumber').value.trim(),
     category: document.getElementById('partCategory').value,
     type: document.getElementById('partType').value,
+    quantity: parseInt(document.getElementById('partQuantity').value) || 1,
     price: parseFloat(document.getElementById('partPrice').value) || 0,
     description: document.getElementById('partDescription').value.trim(),
     common_uses: document.getElementById('partCommonUses').value.trim()
@@ -2374,35 +3823,189 @@ async function handleAddPart(e) {
   }
 }
 
-// Helper functions for modal AI status indicator
-function showModalAiStatus(mainText, subtext, isComplete = false) {
-  const statusDiv = document.getElementById('modalAiStatus');
-  const mainTextDiv = document.getElementById('modalAiStatusText');
-  const subtextDiv = document.getElementById('modalAiStatusSubtext');
+// ========== COMPACT STATUS PILL FUNCTIONS ==========
 
-  if (statusDiv && mainTextDiv && subtextDiv) {
-    mainTextDiv.textContent = mainText;
-    subtextDiv.textContent = subtext;
-    statusDiv.classList.remove('hidden');
+/**
+ * Show the compact status pill with optional transcript preview
+ * @param {string} statusText - Main status message
+ * @param {string} transcript - Optional transcript snippet to show
+ * @param {object} options - Additional options { showView, showUndo, undoData }
+ */
+function showCompactPill(statusText, transcript = '', options = {}) {
+  const pill = document.getElementById('compactStatusPill');
+  const statusSpan = document.getElementById('pillStatus');
+  const transcriptSpan = document.getElementById('pillTranscript');
+  const viewBtn = document.getElementById('pillViewBtn');
+  const undoBtn = document.getElementById('pillUndoBtn');
 
-    // If complete (success or error), change styling
-    if (isComplete) {
-      const spinner = statusDiv.querySelector('.loading-spinner');
-      if (spinner) {
-        spinner.style.display = 'none';
+  if (!pill || !statusSpan) return;
+
+  statusSpan.textContent = statusText;
+
+  // Show transcript snippet (truncate if needed)
+  if (transcriptSpan) {
+    if (transcript && transcript.length > 0) {
+      const truncated = transcript.length > 50 ? transcript.substring(0, 50) + '...' : transcript;
+      transcriptSpan.textContent = `"${truncated}"`;
+    } else {
+      transcriptSpan.textContent = '';
+    }
+  }
+
+  // Show/hide View button
+  if (viewBtn) {
+    if (options.showView && transcript) {
+      viewBtn.classList.remove('hidden');
+    } else {
+      viewBtn.classList.add('hidden');
+    }
+  }
+
+  // Show/hide Undo button
+  if (undoBtn) {
+    if (options.showUndo) {
+      undoBtn.classList.remove('hidden');
+      if (options.undoData) {
+        undoBtn.onclick = () => handleUndoFieldChange(options.undoData);
       }
     } else {
-      const spinner = statusDiv.querySelector('.loading-spinner');
-      if (spinner) {
-        spinner.style.display = 'block';
-      }
+      undoBtn.classList.add('hidden');
+    }
+  }
+
+  // Dynamic buttons: Next, Skip, Clarification choices
+  const pillContent = pill.querySelector('.pill-content');
+  if (pillContent) {
+    // Remove any existing dynamic buttons
+    pillContent.querySelectorAll('.pill-dynamic-btn').forEach(btn => btn.remove());
+
+    // Add Next button
+    if (options.showNext) {
+      const nextBtn = document.createElement('button');
+      nextBtn.type = 'button';
+      nextBtn.className = 'pill-view-btn pill-dynamic-btn';
+      nextBtn.textContent = 'Next';
+      nextBtn.onclick = () => handleNextPart();
+      pillContent.appendChild(nextBtn);
+    }
+
+    // Add Skip button
+    if (options.showSkip) {
+      const skipBtn = document.createElement('button');
+      skipBtn.type = 'button';
+      skipBtn.className = 'pill-view-btn pill-dynamic-btn';
+      skipBtn.textContent = 'Skip';
+      skipBtn.onclick = () => handleSkipPart();
+      pillContent.appendChild(skipBtn);
+    }
+
+    // Add clarification choice buttons
+    if (options.clarificationChoices && Array.isArray(options.clarificationChoices)) {
+      options.clarificationChoices.forEach(choice => {
+        const choiceBtn = document.createElement('button');
+        choiceBtn.type = 'button';
+        choiceBtn.className = 'pill-view-btn pill-dynamic-btn';
+        choiceBtn.textContent = choice;
+        choiceBtn.onclick = () => handleClarificationChoice(choice);
+        pillContent.appendChild(choiceBtn);
+      });
+    }
+  }
+
+  pill.classList.remove('hidden');
+}
+
+/**
+ * Hide the compact status pill
+ */
+function hideCompactPill() {
+  const pill = document.getElementById('compactStatusPill');
+  if (pill) {
+    pill.classList.add('hidden');
+  }
+}
+
+/**
+ * Show dropdown hints (categories and types)
+ */
+function showDropdownHints() {
+  const hints = document.getElementById('dropdownHints');
+  if (hints) {
+    hints.classList.remove('hidden');
+  }
+}
+
+/**
+ * Hide dropdown hints
+ * @param {number} delay - Delay in ms before hiding (default: 0)
+ */
+function hideDropdownHints(delay = 0) {
+  const hints = document.getElementById('dropdownHints');
+  if (hints) {
+    if (delay > 0) {
+      setTimeout(() => hints.classList.add('hidden'), delay);
+    } else {
+      hints.classList.add('hidden');
     }
   }
 }
 
-function hideModalAiStatus() {
-  const statusDiv = document.getElementById('modalAiStatus');
-  if (statusDiv) {
-    statusDiv.classList.add('hidden');
+/**
+ * Show/update the transcript drawer
+ * @param {string} transcript - Full transcription text
+ */
+function showTranscriptDrawer(transcript) {
+  const drawer = document.getElementById('transcriptDrawer');
+  const content = document.getElementById('transcriptContent');
+
+  if (drawer && content) {
+    // Ensure transcript is always a string, never [object Object]
+    content.textContent = String(transcript || '');
+    drawer.classList.add('open');
   }
+}
+
+/**
+ * Hide the transcript drawer
+ */
+function hideTranscriptDrawer() {
+  const drawer = document.getElementById('transcriptDrawer');
+  if (drawer) {
+    drawer.classList.remove('open');
+  }
+}
+
+/**
+ * Toggle the transcript drawer
+ */
+function toggleTranscriptDrawer() {
+  const drawer = document.getElementById('transcriptDrawer');
+  if (drawer) {
+    drawer.classList.toggle('open');
+  }
+}
+
+/**
+ * Handle undo of field change
+ * @param {object} undoData - Contains { field, oldValue, newValue }
+ */
+function handleUndoFieldChange(undoData) {
+  const fieldId = undoData.field;
+  const oldValue = undoData.oldValue;
+
+  const fieldElement = document.getElementById(fieldId);
+  if (fieldElement) {
+    fieldElement.value = oldValue;
+    showCompactPill('✓ Change undone', '', { showView: false, showUndo: false });
+    setTimeout(() => hideCompactPill(), 2000);
+  }
+}
+
+// Backward compatibility wrappers for old function names
+function showModalAiStatus(mainText, subtext, isComplete = false) {
+  showCompactPill(mainText, subtext, { showView: false, showUndo: false });
+}
+
+function hideModalAiStatus() {
+  hideCompactPill();
 }
