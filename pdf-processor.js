@@ -16,13 +16,91 @@ const path = require('path');
 const PDFParser = require('pdf-parse');
 const OpenAI = require('openai');
 const { sql } = require('./db');
+const Tesseract = require('tesseract.js');
+const { fromPath } = require('pdf2pic');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
 /**
- * Extract text from PDF file
+ * Run OCR on a PDF file (for scanned/image-based PDFs)
+ */
+async function extractTextWithOCR(pdfPath, numPages) {
+  console.log(`🔍 Running OCR on ${numPages} pages (this may take several minutes)...`);
+
+  const outputDir = path.join(__dirname, 'temp_ocr');
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  try {
+    // Configure pdf2pic to convert PDF pages to images
+    const converter = fromPath(pdfPath, {
+      density: 300,        // 300 DPI for good OCR quality
+      saveFilename: path.basename(pdfPath, '.pdf'),
+      savePath: outputDir,
+      format: 'png',
+      width: 2480,         // A4 at 300 DPI
+      height: 3508
+    });
+
+    let allText = '';
+
+    // Process each page
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+      console.log(`   OCR processing page ${pageNum}/${numPages}...`);
+
+      try {
+        // Convert page to image
+        const pageImage = await converter(pageNum, { responseType: 'image' });
+
+        // Run Tesseract OCR
+        const result = await Tesseract.recognize(
+          pageImage.path,
+          'eng',
+          {
+            logger: () => {} // Suppress verbose logs
+          }
+        );
+
+        allText += `\n--- Page ${pageNum} ---\n`;
+        allText += result.data.text;
+
+        // Clean up image file
+        fs.unlinkSync(pageImage.path);
+      } catch (pageError) {
+        console.error(`   Error on page ${pageNum}:`, pageError.message);
+        allText += `\n--- Page ${pageNum} (OCR failed) ---\n`;
+      }
+    }
+
+    // Clean up temp directory
+    try {
+      fs.rmdirSync(outputDir);
+    } catch (e) {
+      // Ignore cleanup errors
+    }
+
+    return allText;
+  } catch (error) {
+    console.error('OCR extraction failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Detect if PDF is image-based (scanned) based on text density
+ */
+function isImageBasedPDF(text, numPages) {
+  const avgCharsPerPage = text.length / numPages;
+  const threshold = 100; // Less than 100 chars per page suggests scanned images
+
+  return avgCharsPerPage < threshold;
+}
+
+/**
+ * Extract text from PDF file (with OCR fallback for scanned PDFs)
  */
 async function extractTextFromPDF(pdfPath) {
   console.log(`📄 Extracting text from: ${path.basename(pdfPath)}`);
@@ -31,9 +109,28 @@ async function extractTextFromPDF(pdfPath) {
     const dataBuffer = fs.readFileSync(pdfPath);
     const data = await PDFParser(dataBuffer);
 
+    let finalText = data.text;
+    const numPages = data.numpages;
+
+    // Check if PDF appears to be image-based (scanned)
+    if (isImageBasedPDF(data.text, numPages)) {
+      console.log('⚠️  PDF appears to be scanned/image-based (low text density)');
+      console.log('🔄 Falling back to OCR extraction...');
+
+      try {
+        finalText = await extractTextWithOCR(pdfPath, numPages);
+        console.log(`✓ OCR completed: ${finalText.length} characters extracted`);
+      } catch (ocrError) {
+        console.error('⚠️  OCR failed, using original text extraction:', ocrError.message);
+        // Continue with original text even if OCR fails
+      }
+    } else {
+      console.log(`✓ Text-based PDF: ${finalText.length} characters extracted`);
+    }
+
     return {
-      text: data.text,
-      numPages: data.numpages,
+      text: finalText,
+      numPages: numPages,
       info: data.info
     };
   } catch (error) {
