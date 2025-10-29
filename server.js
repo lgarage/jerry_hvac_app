@@ -2663,6 +2663,105 @@ app.get('/api/manuals/:id/status', async (req, res) => {
   }
 });
 
+// DELETE /api/manuals/:id - Delete a manual and its associated data
+app.delete('/api/manuals/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get manual info first
+    const manual = await sql`
+      SELECT filename, storage_path
+      FROM manuals
+      WHERE id = ${id}
+    `;
+
+    if (manual.length === 0) {
+      return res.status(404).json({ error: 'Manual not found' });
+    }
+
+    // Delete the PDF file
+    try {
+      if (fs.existsSync(manual[0].storage_path)) {
+        fs.unlinkSync(manual[0].storage_path);
+      }
+    } catch (fileError) {
+      console.warn('Could not delete file:', fileError.message);
+    }
+
+    // Delete from database (CASCADE will handle related records)
+    await sql`DELETE FROM manuals WHERE id = ${id}`;
+
+    res.json({
+      success: true,
+      message: 'Manual deleted successfully',
+      deletedId: id
+    });
+
+  } catch (error) {
+    console.error('Error deleting manual:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/manuals/:id/retry - Retry processing a failed manual
+app.post('/api/manuals/:id/retry', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get manual info
+    const manual = await sql`
+      SELECT id, storage_path, filename, status
+      FROM manuals
+      WHERE id = ${id}
+    `;
+
+    if (manual.length === 0) {
+      return res.status(404).json({ error: 'Manual not found' });
+    }
+
+    // Only retry if failed or completed
+    if (manual[0].status === 'processing' || manual[0].status === 'pending') {
+      return res.status(400).json({ error: 'Manual is already being processed' });
+    }
+
+    // Reset status to pending
+    await sql`
+      UPDATE manuals
+      SET status = 'pending', error_message = NULL, processed_at = NULL
+      WHERE id = ${id}
+    `;
+
+    // Start processing in background
+    const { processPDF } = require('./pdf-processor');
+    setImmediate(async () => {
+      try {
+        await processPDF(manual[0].storage_path, id);
+      } catch (error) {
+        console.error('Error retrying PDF processing:', error);
+        await sql`
+          UPDATE manuals
+          SET status = 'failed', error_message = ${error.message}
+          WHERE id = ${id}
+        `;
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Processing restarted',
+      manual: {
+        id: id,
+        status: 'pending',
+        filename: manual[0].filename
+      }
+    });
+
+  } catch (error) {
+    console.error('Error retrying manual:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Dave Mode server running on http://localhost:${PORT}`);
   console.log(`Configured with OpenAI: ${!!process.env.OPENAI_API_KEY}`);

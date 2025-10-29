@@ -13,7 +13,7 @@ try {
 
 const fs = require('fs');
 const path = require('path');
-const PDFParser = require('pdf-parse');
+const pdfParse = require('pdf-parse');
 const OpenAI = require('openai');
 const { sql } = require('./db');
 const Tesseract = require('tesseract.js');
@@ -107,7 +107,7 @@ async function extractTextFromPDF(pdfPath) {
 
   try {
     const dataBuffer = fs.readFileSync(pdfPath);
-    const data = await PDFParser(dataBuffer);
+    const data = await pdfParse(dataBuffer);
 
     let finalText = data.text;
     const numPages = data.numpages;
@@ -483,9 +483,14 @@ async function processPDF(pdfPath, manualId) {
     // Extract parts
     const parts = await extractParts(text);
 
-    // Store in database
+    // Store terminology and parts in database
     const termStats = await storeTerminology(terms, manualId);
     const partStats = await storeParts(parts, manualId);
+
+    // NEW: Schematic analysis using Fireworks Llama4 Maverick
+    console.log(''); // blank line for readability
+    const { analyzePDFSchematics } = require('./schematic-analyzer');
+    const schematicStats = await analyzePDFSchematics(pdfPath, manualId);
 
     // Update manual status
     await sql`
@@ -499,11 +504,13 @@ async function processPDF(pdfPath, manualId) {
     console.log('\n✅ PDF processing complete!');
     console.log(`   Terms: ${termStats.stored} new, ${termStats.skipped} existing`);
     console.log(`   Parts: ${partStats.stored} new, ${partStats.skipped} existing`);
+    console.log(`   Schematics: ${schematicStats.schematicsFound} found in ${schematicStats.totalPages || 0} pages`);
 
     return {
       success: true,
       terms: termStats,
-      parts: partStats
+      parts: partStats,
+      schematics: schematicStats
     };
 
   } catch (error) {

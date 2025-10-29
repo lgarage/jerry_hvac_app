@@ -398,6 +398,10 @@
             ${manual.file_size ? `<div class="manual-info">📦 Size: ${(manual.file_size / 1024 / 1024).toFixed(2)} MB</div>` : ''}
             ${manual.status === 'processing' ? '<div class="progress-bar"><div class="progress-fill" style="width: 50%;"></div></div>' : ''}
             ${manual.error_message ? `<div class="manual-info" style="color: #dc2626;">❌ ${manual.error_message}</div>` : ''}
+            <div class="manual-actions" style="margin-top: 12px; display: flex; gap: 8px;">
+              ${manual.status === 'failed' ? `<button onclick="retryManual(${manual.id})" style="padding: 6px 12px; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">🔄 Retry</button>` : ''}
+              <button onclick="deleteManual(${manual.id})" style="padding: 6px 12px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">🗑️ Delete</button>
+            </div>
           </div>
         `).join('');
 
@@ -429,6 +433,52 @@
       setTimeout(() => {
         toast.classList.remove('show');
       }, 3000);
+    }
+
+    // Delete manual
+    async function deleteManual(manualId) {
+      if (!confirm('Are you sure you want to delete this manual? This cannot be undone.')) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/manuals/${manualId}`, {
+          method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showToast('✅ Manual deleted successfully', 'success');
+          loadManuals(); // Refresh the list
+        } else {
+          showToast('❌ Failed to delete manual', 'error');
+        }
+      } catch (error) {
+        console.error('Error deleting manual:', error);
+        showToast('❌ Error deleting manual', 'error');
+      }
+    }
+
+    // Retry failed manual
+    async function retryManual(manualId) {
+      try {
+        const response = await fetch(`/api/manuals/${manualId}/retry`, {
+          method: 'POST'
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showToast('🔄 Processing restarted...', 'success');
+          loadManuals(); // Refresh the list
+        } else {
+          showToast(`❌ ${result.error || 'Failed to retry'}`, 'error');
+        }
+      } catch (error) {
+        console.error('Error retrying manual:', error);
+        showToast('❌ Error retrying manual', 'error');
+      }
     }
 
     // Initial load
