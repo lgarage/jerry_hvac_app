@@ -6,7 +6,8 @@ This guide will help you set up the PDF ingestion system for automated HVAC term
 
 - Node.js and npm installed
 - PostgreSQL database with pgvector extension (Supabase provides this)
-- OpenAI API key
+- OpenAI API key (for text extraction and embeddings)
+- **Fireworks AI API key** (NEW - for schematic analysis)
 - Database connection string in `.env` file
 
 ## Quick Setup (3 Steps)
@@ -19,10 +20,12 @@ The required packages are already in `package.json`. If you haven't installed th
 npm install
 ```
 
-**New dependencies for PDF ingestion:**
+**Dependencies for PDF ingestion:**
 - `pdf-parse` - PDF text extraction (for text-based PDFs)
 - `tesseract.js` - OCR for scanned/image-based PDFs
-- `pdf2pic` - Convert PDF pages to images for OCR
+- `pdf2pic` - Convert PDF pages to images
+- `@fireworks-ai/fireworks-ai` - **NEW:** Schematic analysis with Llama4 Maverick
+- `sharp` - **NEW:** Image processing
 - `multer` - File upload handling
 - `@supabase/storage-js` - Supabase storage integration
 
@@ -68,17 +71,24 @@ This will:
 ✓ View 'manual_stats' exists
 ```
 
-### Step 3: Configure OpenAI API Key
+### Step 3: Configure API Keys
 
-Edit `.env` and add your OpenAI API key:
+Edit `.env` and add your API keys:
 
 ```bash
+# OpenAI (for text extraction and embeddings)
 OPENAI_API_KEY=sk-your-actual-key-here
+
+# Fireworks AI (for schematic analysis) - NEW
+FIREWORKS_API_KEY=your-fireworks-api-key-here
 ```
 
+**Get Fireworks API Key:** Sign up at [fireworks.ai](https://fireworks.ai)
+
 The PDF processor uses:
-- **GPT-4o-mini** for terminology and parts extraction (cost-effective)
-- **text-embedding-3-small** for semantic embeddings
+- **GPT-4o-mini** (OpenAI) - Terminology and parts extraction ($0.040/manual)
+- **text-embedding-3-small** (OpenAI) - Semantic embeddings ($0.001/manual)
+- **Llama4 Maverick** (Fireworks) - Schematic analysis ($0.007/manual) **NEW**
 
 ## Verify Setup
 
