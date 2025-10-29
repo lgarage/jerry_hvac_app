@@ -1,5 +1,16 @@
 // PDF Processing Worker - Extracts terminology and parts from HVAC manuals
 require('dotenv').config();
+
+// Polyfill canvas for pdf-parse (fixes DOMMatrix error)
+try {
+  const { DOMMatrix, DOMPoint } = require('@napi-rs/canvas');
+  global.DOMMatrix = DOMMatrix;
+  global.DOMPoint = DOMPoint;
+} catch (e) {
+  // Fallback if @napi-rs/canvas is not available
+  console.warn('Canvas polyfill not available, PDF parsing may fail');
+}
+
 const fs = require('fs');
 const path = require('path');
 const PDFParser = require('pdf-parse');
