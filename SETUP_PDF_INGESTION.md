@@ -20,7 +20,9 @@ npm install
 ```
 
 **New dependencies for PDF ingestion:**
-- `pdf-parse` - PDF text extraction
+- `pdf-parse` - PDF text extraction (for text-based PDFs)
+- `tesseract.js` - OCR for scanned/image-based PDFs
+- `pdf2pic` - Convert PDF pages to images for OCR
 - `multer` - File upload handling
 - `@supabase/storage-js` - Supabase storage integration
 
@@ -117,7 +119,35 @@ You should see the PDF upload interface with:
 3. **Click "Upload PDF"**
 4. **Watch the status** change from "pending" → "processing" → "completed"
 
-**Processing time:** ~1-2 minutes for a 10-page manual
+**Processing time:** ~1-2 minutes for a 10-page text-based manual
+
+## OCR Support for Scanned PDFs
+
+The system **automatically detects** scanned/image-based PDFs and uses OCR when needed.
+
+### How It Works:
+
+1. **Text extraction** first attempts normal PDF text extraction
+2. **Detection** checks if text density is too low (< 100 chars/page)
+3. **OCR fallback** if scanned, converts pages to images and runs Tesseract OCR
+4. **Seamless** - no user intervention needed
+
+### OCR Processing Time:
+
+- **Text-based PDF:** 1-2 mins per 10 pages
+- **Scanned PDF with OCR:** 5-10 mins per 10 pages (significantly longer)
+- **140-page scanned manual:** 70-140 minutes (~1-2 hours)
+
+### OCR Quality:
+
+- Works best with **clear, high-resolution scans** (300 DPI+)
+- May struggle with:
+  - Handwritten notes
+  - Low-quality photocopies
+  - Skewed/rotated pages
+  - Multi-column layouts
+
+**Tip:** Check the first few pages of extraction to verify OCR quality before processing very large scanned manuals.
 
 ## What Gets Extracted
 
@@ -242,15 +272,27 @@ node -e "require('./db.js').testConnection()"
 
 ### "No terms extracted"
 **Possible causes:**
-1. PDF is a scanned image (OCR needed - not currently supported)
-2. PDF is corrupted
-3. PDF contains no technical HVAC content
+1. PDF is corrupted or encrypted
+2. PDF contains no technical HVAC content
+3. OCR failed on scanned PDF (check quality)
+4. PDF is non-English (Tesseract configured for English only)
 
 **Debug:**
 ```bash
 # Test PDF text extraction
 node pdf-processor.js /path/to/manual.pdf 1
 ```
+
+### "OCR taking too long"
+**For large scanned PDFs (100+ pages):**
+- OCR can take 1-2 hours for a 140-page manual
+- This is normal - OCR is CPU-intensive
+- Check server logs to see progress (page X/Y)
+- Consider processing smaller sections first
+
+**Speed up OCR:**
+- Ensure good PDF quality (300 DPI scans)
+- Use text-based PDFs when possible (10x faster)
 
 ### "Rate limit exceeded"
 **Fix:** OpenAI has rate limits. The processor already includes delays:
