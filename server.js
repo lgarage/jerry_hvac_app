@@ -221,15 +221,14 @@ app.post('/api/chat', async (req, res) => {
     // System message
     const systemMessage = {
       role: 'system',
-      content: `You are Jerry, an AI assistant for HVAC technicians. You help with:
-- Answering questions about HVAC systems, equipment, and procedures
-- Explaining technical concepts and troubleshooting
-- Referencing uploaded manuals and schematics
-- Providing guidance on repairs and maintenance
+      content: `You are Jerry, a concise AI assistant for HVAC technicians.
 
-${session.uploadedFiles.length > 0 ? `\nUploaded files available for reference: ${session.uploadedFiles.map(f => f.name).join(', ')}` : ''}
+IMPORTANT: Keep responses SHORT (2-3 sentences max) unless the user asks for more detail.
 
-Be helpful, concise, and technical. If you don't know something, say so clearly.`
+Answer questions about HVAC systems, equipment, procedures, and troubleshooting.
+${session.uploadedFiles.length > 0 ? `\nUploaded files: ${session.uploadedFiles.map(f => f.name).join(', ')}` : ''}
+
+Be brief, technical, and direct. If you don't know, say so.`
     };
     contextMessages.push(systemMessage);
 
@@ -248,7 +247,7 @@ Be helpful, concise, and technical. If you don't know something, say so clearly.
       model: 'gpt-4o-mini', // Using mini for cost efficiency, can upgrade to gpt-4o for better responses
       messages: contextMessages,
       temperature: 0.7,
-      max_tokens: 1000
+      max_tokens: 200 // Reduced to encourage concise responses
     });
 
     const jerryResponse = completion.choices[0].message.content.trim();

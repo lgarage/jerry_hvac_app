@@ -1811,6 +1811,9 @@ function displayResults(result) {
       resultsSection.classList.remove('visible');
     }
 
+    // Update view toggle
+    updateViewToggle();
+
     showStatus('💬 Response from Jerry', 'success');
     return; // Don't process as parts documentation
   }
@@ -1833,6 +1836,7 @@ function displayResults(result) {
     chatHistory.scrollTop = chatHistory.scrollHeight;
 
     // Continue to show parts below
+    // View toggle will be updated at the end when both sections are ready
   }
 
   // Handle voice commands (add part/term) differently
@@ -2050,6 +2054,9 @@ function displayResults(result) {
     renderRepairs();
 
     resultsSection.classList.add('visible');
+
+    // Update view toggle (in case both chat and repairs exist)
+    updateViewToggle();
 
     setTimeout(() => {
       resultsSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -4488,5 +4495,71 @@ document.addEventListener('DOMContentLoaded', () => {
   const clearChatBtn = document.getElementById('clearChatBtn');
   if (clearChatBtn) {
     clearChatBtn.addEventListener('click', clearChatHistory);
+  }
+});
+
+/**
+ * Toggle between chat and repairs view
+ */
+function toggleView(view) {
+  const chatSection = document.getElementById('chatSection');
+  const resultsSection = document.getElementById('resultsSection');
+  const showChatBtn = document.getElementById('showChatBtn');
+  const showRepairsBtn = document.getElementById('showRepairsBtn');
+
+  if (view === 'chat') {
+    chatSection.classList.add('visible');
+    resultsSection.classList.remove('visible');
+    showChatBtn.classList.add('active');
+    showRepairsBtn.classList.remove('active');
+  } else {
+    chatSection.classList.remove('visible');
+    resultsSection.classList.add('visible');
+    showChatBtn.classList.remove('active');
+    showRepairsBtn.classList.add('active');
+  }
+}
+
+/**
+ * Show or hide the view toggle based on what content exists
+ */
+function updateViewToggle() {
+  const chatSection = document.getElementById('chatSection');
+  const resultsSection = document.getElementById('resultsSection');
+  const viewToggle = document.getElementById('viewToggle');
+  const chatHistory = document.getElementById('chatHistory');
+  const repairGrid = document.getElementById('repairGrid');
+
+  const hasChat = chatHistory && chatHistory.children.length > 0;
+  const hasRepairs = repairGrid && repairGrid.children.length > 0;
+
+  // Show toggle only if both exist
+  if (hasChat && hasRepairs) {
+    viewToggle.classList.remove('hidden');
+  } else {
+    viewToggle.classList.add('hidden');
+  }
+
+  // Ensure at least one section is visible if content exists
+  if (hasChat && !hasRepairs) {
+    chatSection.classList.add('visible');
+    resultsSection.classList.remove('visible');
+  } else if (!hasChat && hasRepairs) {
+    chatSection.classList.remove('visible');
+    resultsSection.classList.add('visible');
+  }
+}
+
+// Initialize toggle buttons
+document.addEventListener('DOMContentLoaded', () => {
+  const showChatBtn = document.getElementById('showChatBtn');
+  const showRepairsBtn = document.getElementById('showRepairsBtn');
+
+  if (showChatBtn) {
+    showChatBtn.addEventListener('click', () => toggleView('chat'));
+  }
+
+  if (showRepairsBtn) {
+    showRepairsBtn.addEventListener('click', () => toggleView('repairs'));
   }
 });

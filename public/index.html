@@ -445,6 +445,36 @@
         margin-top: 4px;
       }
 
+      /* View Toggle Tabs */
+      .view-toggle {
+        margin-bottom: 0;
+      }
+
+      .view-tab-btn {
+        flex: 1;
+        max-width: 200px;
+        padding: 12px 24px;
+        border: 2px solid #e5e7eb;
+        background: white;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        color: #6b7280;
+      }
+
+      .view-tab-btn:hover {
+        border-color: #667eea;
+        color: #667eea;
+      }
+
+      .view-tab-btn.active {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-color: #667eea;
+      }
+
       .loading-spinner {
         display: inline-block;
         width: 16px;
@@ -1109,6 +1139,16 @@
           <div id="floatingTextInput" class="floating-text-input hidden">
             <textarea id="floatingTextarea" placeholder="Type your repair notes or search term..." rows="3"></textarea>
             <button id="floatingSubmit" class="floating-submit-btn">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- View Toggle Tabs (only shown when both chat and repairs exist) -->
+      <div id="viewToggle" class="view-toggle hidden">
+        <div class="card" style="padding: 12px; margin-bottom: 20px;">
+          <div style="display: flex; gap: 12px; justify-content: center;">
+            <button id="showChatBtn" class="view-tab-btn active">💬 Conversation</button>
+            <button id="showRepairsBtn" class="view-tab-btn">🔧 Repairs</button>
           </div>
         </div>
       </div>
