@@ -92,6 +92,193 @@ function saveCorrections() {
 // Load corrections on startup
 loadCorrections();
 
+// ========== CHAT HISTORY ==========
+// Store chat conversations (in-memory for now, can move to DB later)
+const chatSessions = new Map(); // sessionId -> { messages: [], uploadedFiles: [] }
+
+function getChatSession(sessionId = 'default') {
+  if (!chatSessions.has(sessionId)) {
+    chatSessions.set(sessionId, {
+      messages: [],
+      uploadedFiles: [],
+      lastActivity: Date.now()
+    });
+  }
+  return chatSessions.get(sessionId);
+}
+
+// Clean up old sessions (older than 24 hours)
+setInterval(() => {
+  const now = Date.now();
+  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+  for (const [sessionId, session] of chatSessions.entries()) {
+    if (now - session.lastActivity > maxAge) {
+      chatSessions.delete(sessionId);
+      console.log(`🗑️ Cleaned up chat session: ${sessionId}`);
+    }
+  }
+}, 60 * 60 * 1000); // Run every hour
+
+// ========== MESSAGE TYPE DETECTION ==========
+async function detectMessageType(text) {
+  try {
+    const systemPrompt = `You are a message classifier for an HVAC documentation system.
+
+Classify the input text into ONE of these categories:
+
+1. "conversational" - Questions, discussions, requests for information, greetings, general chat
+   Examples:
+   - "What's the difference between R-410A and R-22?"
+   - "How do I test a capacitor?"
+   - "Can you explain how this schematic works?"
+   - "Tell me about the manual I just uploaded"
+   - "Hello, how are you?"
+
+2. "parts_documentation" - HVAC repair notes with equipment, problems, parts needed, actions
+   Examples:
+   - "RTU-1 low on charge needs 4 pounds 410A"
+   - "AHU-2 contactor is buzzing, need to replace"
+   - "Need two 24x24x2 pleated filters and one damper actuator"
+
+3. "mixed" - Contains BOTH conversational elements AND repair documentation
+   Examples:
+   - "Hey Jerry, RTU-1 needs refrigerant. Can you tell me what type?"
+   - "I'm working on AHU-2, it has a bad contactor. What's the part number for this model?"
+
+Return JSON:
+{
+  "message_type": "conversational" | "parts_documentation" | "mixed",
+  "confidence": 0-100,
+  "reason": "brief explanation",
+  "contains_parts": boolean,
+  "contains_question": boolean
+}
+
+Be accurate - parts documentation should have equipment identifiers (RTU-1, AHU-2) and specific parts/problems.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text }
+      ],
+      temperature: 0.2
+    });
+
+    const responseText = completion.choices[0].message.content.trim();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+
+    if (!jsonMatch) {
+      // Default to conversational if detection fails
+      return {
+        message_type: 'conversational',
+        confidence: 50,
+        reason: 'Detection failed, defaulting to conversational',
+        contains_parts: false,
+        contains_question: true
+      };
+    }
+
+    const result = JSON.parse(jsonMatch[0]);
+    console.log(`📝 Message type detected: ${result.message_type} (confidence: ${result.confidence}%)`);
+
+    return result;
+
+  } catch (error) {
+    console.error('❌ Message type detection failed:', error.message);
+    // Default to conversational on error
+    return {
+      message_type: 'conversational',
+      confidence: 50,
+      reason: 'Error in detection, defaulting to conversational',
+      contains_parts: false,
+      contains_question: true
+    };
+  }
+}
+
+// ========== CONVERSATIONAL CHAT ENDPOINT ==========
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { text, sessionId = 'default', uploadedFiles = [] } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: 'No text provided' });
+    }
+
+    // Get or create chat session
+    const session = getChatSession(sessionId);
+    session.lastActivity = Date.now();
+
+    // Add uploaded files to session context if provided
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      session.uploadedFiles = [...session.uploadedFiles, ...uploadedFiles];
+    }
+
+    // Build context from chat history and uploaded files
+    const contextMessages = [];
+
+    // System message
+    const systemMessage = {
+      role: 'system',
+      content: `You are Jerry, an AI assistant for HVAC technicians. You help with:
+- Answering questions about HVAC systems, equipment, and procedures
+- Explaining technical concepts and troubleshooting
+- Referencing uploaded manuals and schematics
+- Providing guidance on repairs and maintenance
+
+${session.uploadedFiles.length > 0 ? `\nUploaded files available for reference: ${session.uploadedFiles.map(f => f.name).join(', ')}` : ''}
+
+Be helpful, concise, and technical. If you don't know something, say so clearly.`
+    };
+    contextMessages.push(systemMessage);
+
+    // Add recent chat history (last 10 messages)
+    const recentHistory = session.messages.slice(-10);
+    contextMessages.push(...recentHistory);
+
+    // Add current user message
+    contextMessages.push({
+      role: 'user',
+      content: text
+    });
+
+    // Get response from GPT-4
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini', // Using mini for cost efficiency, can upgrade to gpt-4o for better responses
+      messages: contextMessages,
+      temperature: 0.7,
+      max_tokens: 1000
+    });
+
+    const jerryResponse = completion.choices[0].message.content.trim();
+
+    // Store messages in history
+    session.messages.push({
+      role: 'user',
+      content: text,
+      timestamp: Date.now()
+    });
+    session.messages.push({
+      role: 'assistant',
+      content: jerryResponse,
+      timestamp: Date.now()
+    });
+
+    // Return response
+    res.json({
+      response: jerryResponse,
+      sessionId,
+      message_type: 'conversational',
+      chat_history: session.messages.slice(-10) // Return last 10 messages for UI
+    });
+
+  } catch (error) {
+    console.error('Error in /api/chat:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Simple transcription endpoint for conversational prompts
 app.post('/api/transcribe', async (req, res) => {
   try {
@@ -289,8 +476,42 @@ app.post('/api/parse', async (req, res) => {
       }
     }
 
-    // STEP 2: Normal repair documentation flow (if not a command)
-    // Pass both raw and normalized text to GPT-4 for better context
+    // STEP 2: Detect message type (conversational vs parts documentation vs mixed)
+    const messageType = await detectMessageType(rawTranscription);
+    console.log(`📋 Message type: ${messageType.message_type} (confidence: ${messageType.confidence}%)`);
+
+    // Handle based on message type
+    if (messageType.message_type === 'conversational' && !messageType.contains_parts) {
+      // Pure conversational - route to chat endpoint
+      try {
+        const chatResponse = await fetch(`http://localhost:${PORT}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: transcription,
+            sessionId: req.body.sessionId || 'default'
+          })
+        });
+
+        const chatData = await chatResponse.json();
+
+        return res.json({
+          message_type: 'conversational',
+          response: chatData.response,
+          chat_history: chatData.chat_history,
+          raw_transcription: rawTranscription,
+          transcription,
+          suggestions,
+          newTerms
+        });
+      } catch (chatError) {
+        console.error('Error routing to chat:', chatError);
+        // Fall through to parts parsing if chat fails
+      }
+    }
+
+    // For mixed messages or parts documentation, do parts parsing
+    // (Mixed messages will get both parsing AND chat response)
     const parsedRepairs = await parseRepairs(transcription, rawTranscription);
 
     // Auto-match parts from catalog for each repair
@@ -308,13 +529,34 @@ app.post('/api/parse', async (req, res) => {
         .slice(0, 3); // Limit to top 3 to avoid overwhelming user
     }
 
+    // For mixed messages, also get a chat response
+    let chatResponse = null;
+    if (messageType.message_type === 'mixed' && messageType.contains_question) {
+      try {
+        const chatReq = await fetch(`http://localhost:${PORT}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: transcription,
+            sessionId: req.body.sessionId || 'default'
+          })
+        });
+        const chatData = await chatReq.json();
+        chatResponse = chatData.response;
+      } catch (chatError) {
+        console.error('Error getting chat response for mixed message:', chatError);
+      }
+    }
+
     res.json({
+      message_type: messageType.message_type,
       raw_transcription: rawTranscription, // Original text before normalization
       transcription, // Normalized text with standard terminology
       repairs: repairsWithParts,
       suggestions, // Send terminology suggestions to frontend for confirmation
       newTerms, // Send potential new terms to add to glossary
-      newParts // Send potential new parts to add to catalog
+      newParts, // Send potential new parts to add to catalog
+      chat_response: chatResponse // Include chat response for mixed messages
     });
 
   } catch (error) {
