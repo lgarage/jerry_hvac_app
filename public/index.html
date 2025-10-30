@@ -977,7 +977,7 @@
         <div style="display: flex; gap: 12px; flex-wrap: wrap;">
           <a href="/manage-parts.html" style="background: white; color: #667eea; border: 2px solid #667eea; padding: 10px 16px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; display: inline-block; white-space: nowrap;">📦 Manage Parts</a>
           <a href="/admin.html" style="background: white; color: #667eea; border: 2px solid #667eea; padding: 10px 16px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; display: inline-block; white-space: nowrap;">⚙️ Manage Terms</a>
-          <button id="uploadPdfBtn" style="background: white; color: #667eea; border: 2px solid #667eea; padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; cursor: pointer; white-space: nowrap;">📄 Upload PDF</button>
+          <button id="uploadPdfBtn" style="background: white; color: #667eea; border: 2px solid #667eea; padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; cursor: pointer; white-space: nowrap;">📄 Upload Manual</button>
         </div>
       </div>
 
@@ -1176,19 +1176,19 @@
     <div id="pdfUploadModal" class="modal-overlay hidden">
       <div class="modal-content" style="max-width: 600px;">
         <div class="modal-header">
-          <h2>📄 Upload PDF Manual</h2>
+          <h2>📄 Upload Manual</h2>
           <button class="close-btn" id="closePdfModal">&times;</button>
         </div>
 
         <!-- Upload State: Idle/Select File -->
         <div id="pdfSelectState">
-          <p style="color: #666; margin-bottom: 16px;">Upload HVAC equipment manuals for terminology parsing and training.</p>
+          <p style="color: #666; margin-bottom: 16px;">Upload HVAC equipment manuals (PDF or images) for terminology parsing and training.</p>
 
           <div style="border: 3px dashed #667eea; border-radius: 12px; padding: 48px 24px; text-align: center; cursor: pointer; transition: all 0.3s; background: #f8f9fa;" id="pdfDropZone">
             <div style="font-size: 48px; margin-bottom: 12px;">📄</div>
-            <div style="font-size: 16px; font-weight: 600; color: #333; margin-bottom: 8px;">Click to select PDF or drag and drop</div>
-            <div style="font-size: 14px; color: #666;">Maximum 50MB</div>
-            <input type="file" id="pdfFileInput" accept=".pdf" style="display: none;" />
+            <div style="font-size: 16px; font-weight: 600; color: #333; margin-bottom: 8px;">Click to select file or drag and drop</div>
+            <div style="font-size: 14px; color: #666;">Supports: PDF, JPG, PNG, TIFF, BMP • Maximum 50MB</div>
+            <input type="file" id="pdfFileInput" accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif,.bmp" style="display: none;" />
           </div>
 
           <div id="pdfFileSelected" style="display: none; margin-top: 16px; padding: 16px; background: #f0fdf4; border-radius: 8px; border: 1px solid #86efac;">

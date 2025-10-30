@@ -2501,10 +2501,19 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
+    const allowedMimeTypes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/tiff',
+      'image/bmp'
+    ];
+
+    if (allowedMimeTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Only PDF files are allowed'), false);
+      cb(new Error('Only PDF and image files (JPG, PNG, TIFF, BMP) are allowed'), false);
     }
   },
   limits: {
@@ -2512,11 +2521,11 @@ const upload = multer({
   }
 });
 
-// POST /api/manuals/upload - Upload and process a PDF manual
+// POST /api/manuals/upload - Upload and process a manual (PDF or image)
 app.post('/api/manuals/upload', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No PDF file uploaded' });
+      return res.status(400).json({ error: 'No file uploaded' });
     }
 
     console.log(`📤 Uploaded: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);

@@ -4096,10 +4096,8 @@ function initPdfUploadModal() {
     dropZone.style.background = '#f8f9fa';
 
     const files = e.dataTransfer.files;
-    if (files.length > 0 && files[0].type === 'application/pdf') {
+    if (files.length > 0) {
       pdfHandleFileSelect(files[0]);
-    } else {
-      alert('Please select a PDF file');
     }
   });
 
@@ -4125,11 +4123,33 @@ function initPdfUploadModal() {
 }
 
 /**
+ * Check if file type is supported
+ */
+function isValidManualFile(file) {
+  if (!file) return false;
+
+  const validTypes = [
+    'application/pdf',
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/tiff',
+    'image/bmp'
+  ];
+
+  const validExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp'];
+  const fileName = file.name.toLowerCase();
+  const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
+
+  return validTypes.includes(file.type) || hasValidExtension;
+}
+
+/**
  * Handle file selection
  */
 function pdfHandleFileSelect(file) {
-  if (!file || file.type !== 'application/pdf') {
-    alert('Please select a PDF file');
+  if (!isValidManualFile(file)) {
+    alert('Please select a valid file (PDF, JPG, PNG, TIFF, or BMP)');
     return;
   }
 

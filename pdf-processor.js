@@ -140,6 +140,47 @@ async function extractTextFromPDF(pdfPath) {
 }
 
 /**
+ * Extract text from image file using OCR
+ */
+async function extractTextFromImage(imagePath) {
+  console.log(`🖼️  Extracting text from image: ${path.basename(imagePath)}`);
+
+  try {
+    const result = await Tesseract.recognize(
+      imagePath,
+      'eng',
+      {
+        logger: (m) => {
+          if (m.status === 'recognizing text') {
+            process.stdout.write(`\r   OCR progress: ${Math.round(m.progress * 100)}%`);
+          }
+        }
+      }
+    );
+
+    console.log(`\n✓ OCR completed: ${result.data.text.length} characters extracted`);
+
+    return {
+      text: result.data.text,
+      numPages: 1, // Single image = 1 page
+      confidence: result.data.confidence
+    };
+  } catch (error) {
+    console.error('Error extracting text from image:', error);
+    throw error;
+  }
+}
+
+/**
+ * Detect if file is an image based on extension
+ */
+function isImageFile(filePath) {
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp'];
+  const ext = path.extname(filePath).toLowerCase();
+  return imageExtensions.includes(ext);
+}
+
+/**
  * Extract HVAC terminology from text using GPT-4
  */
 async function extractTerminology(text, chunkSize = 3000) {
@@ -462,7 +503,10 @@ async function storeParts(parts, manualId) {
 async function processPDF(pdfPath, manualId, options = {}) {
   const { extractTerms = true, extractSchematics = true } = options;
 
-  console.log('\n🚀 Starting PDF processing...\n');
+  const isImage = isImageFile(pdfPath);
+  const fileType = isImage ? 'image' : 'PDF';
+
+  console.log(`\n🚀 Starting ${fileType} processing...\n`);
   if (!extractTerms) {
     console.log('⚡ Fast mode: Skipping term/part extraction\n');
   }
@@ -480,8 +524,17 @@ async function processPDF(pdfPath, manualId, options = {}) {
     let numPages = 0;
 
     if (extractTerms) {
-      // Extract text
-      const { text, numPages: pages } = await extractTextFromPDF(pdfPath);
+      // Extract text (from PDF or image)
+      let text, pages;
+      if (isImage) {
+        const result = await extractTextFromImage(pdfPath);
+        text = result.text;
+        pages = result.numPages;
+      } else {
+        const result = await extractTextFromPDF(pdfPath);
+        text = result.text;
+        pages = result.numPages;
+      }
       numPages = pages;
 
       // Update page count
@@ -508,8 +561,32 @@ async function processPDF(pdfPath, manualId, options = {}) {
     let schematicStats = { schematicsFound: 0, totalPages: 0 };
     if (extractSchematics) {
       console.log(''); // blank line for readability
-      const { analyzePDFSchematics } = require('./schematic-analyzer');
-      schematicStats = await analyzePDFSchematics(pdfPath, manualId);
+
+      if (isImage) {
+        // For single images, analyze directly
+        const { analyzePageImage, storeSchematicData } = require('./schematic-analyzer');
+        console.log('🔬 Analyzing image for schematics...');
+
+        try {
+          const analysis = await analyzePageImage(pdfPath, 1);
+
+          if (analysis && analysis.schematic_detected) {
+            console.log(`  ✓ Schematic detected (${analysis.schematic_type}) with ${analysis.components?.length || 0} components`);
+            await storeSchematicData(manualId, 1, pdfPath, analysis);
+            schematicStats = { schematicsFound: 1, totalPages: 1 };
+          } else {
+            console.log('  ○ No schematic detected');
+            schematicStats = { schematicsFound: 0, totalPages: 1 };
+          }
+        } catch (error) {
+          console.error('  ✗ Error analyzing image:', error.message);
+          schematicStats = { schematicsFound: 0, totalPages: 1 };
+        }
+      } else {
+        // For PDFs, use the normal PDF schematic analysis
+        const { analyzePDFSchematics } = require('./schematic-analyzer');
+        schematicStats = await analyzePDFSchematics(pdfPath, manualId);
+      }
     }
 
     // Update manual status
@@ -521,13 +598,13 @@ async function processPDF(pdfPath, manualId, options = {}) {
       WHERE id = ${manualId}
     `;
 
-    console.log('\n✅ PDF processing complete!');
+    console.log(`\n✅ ${fileType} processing complete!`);
     if (extractTerms) {
       console.log(`   Terms: ${termStats.stored} new, ${termStats.skipped} existing`);
       console.log(`   Parts: ${partStats.stored} new, ${partStats.skipped} existing`);
     }
     if (extractSchematics) {
-      console.log(`   Schematics: ${schematicStats.schematicsFound} found in ${schematicStats.totalPages || 0} pages`);
+      console.log(`   Schematics: ${schematicStats.schematicsFound} found in ${schematicStats.totalPages || 0} ${isImage ? 'image' : 'pages'}`);
     }
 
     return {
@@ -538,7 +615,7 @@ async function processPDF(pdfPath, manualId, options = {}) {
     };
 
   } catch (error) {
-    console.error('\n❌ PDF processing failed:', error);
+    console.error(`\n❌ ${fileType} processing failed:`, error);
 
     // Update manual status
     await sql`
