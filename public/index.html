@@ -977,6 +977,7 @@
         <div style="display: flex; gap: 12px; flex-wrap: wrap;">
           <a href="/manage-parts.html" style="background: white; color: #667eea; border: 2px solid #667eea; padding: 10px 16px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; display: inline-block; white-space: nowrap;">📦 Manage Parts</a>
           <a href="/admin.html" style="background: white; color: #667eea; border: 2px solid #667eea; padding: 10px 16px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; display: inline-block; white-space: nowrap;">⚙️ Manage Terms</a>
+          <button id="uploadPdfBtn" style="background: white; color: #667eea; border: 2px solid #667eea; padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; cursor: pointer; white-space: nowrap;">📄 Upload Manual</button>
         </div>
       </div>
 
@@ -1168,6 +1169,90 @@
         </div>
 
         <div id="partsResults" class="parts-grid"></div>
+      </div>
+    </div>
+
+    <!-- PDF Upload Modal -->
+    <div id="pdfUploadModal" class="modal-overlay hidden">
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h2>📄 Upload Manual</h2>
+          <button class="close-btn" id="closePdfModal">&times;</button>
+        </div>
+
+        <!-- Upload State: Idle/Select File -->
+        <div id="pdfSelectState">
+          <p style="color: #666; margin-bottom: 16px;">Upload HVAC equipment manuals (PDF or images) for terminology parsing and training.</p>
+
+          <div style="border: 3px dashed #667eea; border-radius: 12px; padding: 48px 24px; text-align: center; cursor: pointer; transition: all 0.3s; background: #f8f9fa;" id="pdfDropZone">
+            <div style="font-size: 48px; margin-bottom: 12px;">📄</div>
+            <div style="font-size: 16px; font-weight: 600; color: #333; margin-bottom: 8px;">Click to select file or drag and drop</div>
+            <div style="font-size: 14px; color: #666;">Supports: PDF, JPG, PNG, TIFF, BMP • Maximum 50MB</div>
+            <input type="file" id="pdfFileInput" accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif,.bmp" style="display: none;" />
+          </div>
+
+          <div id="pdfFileSelected" style="display: none; margin-top: 16px; padding: 16px; background: #f0fdf4; border-radius: 8px; border: 1px solid #86efac;">
+            <div style="display: flex; align-items: center; justify-space-between;">
+              <div>
+                <div style="font-weight: 600; color: #166534;">✓ <span id="pdfFileName"></span></div>
+                <div style="font-size: 14px; color: #16a34a;"><span id="pdfFileSize"></span> MB</div>
+              </div>
+              <button id="pdfChangeFile" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">Change</button>
+            </div>
+          </div>
+
+          <div style="margin-top: 16px; display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="pdfSchematicsOnly" style="width: auto; cursor: pointer;" />
+            <label for="pdfSchematicsOnly" style="cursor: pointer; user-select: none; color: #666; font-size: 14px;">
+              ⚡ Fast mode: Extract schematics only (skip term/part extraction)
+            </label>
+          </div>
+
+          <div style="display: flex; gap: 12px; margin-top: 24px;">
+            <button id="pdfCancelBtn" class="btn-cancel" style="flex: 1; background: #6b7280; color: white; padding: 14px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer;">Cancel</button>
+            <button id="pdfUploadStartBtn" class="btn-secondary" style="flex: 1;" disabled>Upload & Process</button>
+          </div>
+        </div>
+
+        <!-- Upload State: Processing -->
+        <div id="pdfProcessingState" style="display: none;">
+          <div style="text-align: center; padding: 24px;">
+            <div style="font-size: 48px; margin-bottom: 16px;">⏳</div>
+            <h3 style="margin-bottom: 8px;" id="pdfProcessingTitle">Uploading PDF...</h3>
+            <p style="color: #666; margin-bottom: 24px;" id="pdfProcessingMessage">Please wait while we process your manual.</p>
+
+            <div style="background: #f3f4f6; border-radius: 8px; height: 8px; overflow: hidden; margin-bottom: 16px;">
+              <div id="pdfProgressBar" style="background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; width: 0%; transition: width 0.3s;"></div>
+            </div>
+
+            <div style="font-size: 14px; color: #666; margin-bottom: 24px;">
+              <div id="pdfStatusText">Initializing...</div>
+              <div id="pdfManualId" style="display: none;"></div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 12px;">
+            <button id="pdfCancelUploadBtn" class="btn-danger" style="flex: 1;">Cancel Upload</button>
+          </div>
+        </div>
+
+        <!-- Upload State: Complete -->
+        <div id="pdfCompleteState" style="display: none;">
+          <div style="text-align: center; padding: 24px;">
+            <div style="font-size: 48px; margin-bottom: 16px;">✅</div>
+            <h3 style="margin-bottom: 8px;">PDF Processed Successfully!</h3>
+            <p style="color: #666; margin-bottom: 24px;">Your manual has been uploaded and processed.</p>
+
+            <div id="pdfStats" style="background: #f3f4f6; padding: 16px; border-radius: 8px; text-align: left; margin-bottom: 24px;">
+              <!-- Stats will be populated by JavaScript -->
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 12px;">
+            <button id="pdfBackToHomeBtn" class="btn-secondary" style="flex: 1;">Back to Home</button>
+            <button id="pdfViewResultsBtn" class="btn-primary" style="flex: 1;">View Results</button>
+          </div>
+        </div>
       </div>
     </div>
 

@@ -140,6 +140,47 @@ async function extractTextFromPDF(pdfPath) {
 }
 
 /**
+ * Extract text from image file using OCR
+ */
+async function extractTextFromImage(imagePath) {
+  console.log(`🖼️  Extracting text from image: ${path.basename(imagePath)}`);
+
+  try {
+    const result = await Tesseract.recognize(
+      imagePath,
+      'eng',
+      {
+        logger: (m) => {
+          if (m.status === 'recognizing text') {
+            process.stdout.write(`\r   OCR progress: ${Math.round(m.progress * 100)}%`);
+          }
+        }
+      }
+    );
+
+    console.log(`\n✓ OCR completed: ${result.data.text.length} characters extracted`);
+
+    return {
+      text: result.data.text,
+      numPages: 1, // Single image = 1 page
+      confidence: result.data.confidence
+    };
+  } catch (error) {
+    console.error('Error extracting text from image:', error);
+    throw error;
+  }
+}
+
+/**
+ * Detect if file is an image based on extension
+ */
+function isImageFile(filePath) {
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp'];
+  const ext = path.extname(filePath).toLowerCase();
+  return imageExtensions.includes(ext);
+}
+
+/**
  * Extract HVAC terminology from text using GPT-4
  */
 async function extractTerminology(text, chunkSize = 3000) {
@@ -453,9 +494,22 @@ async function storeParts(parts, manualId) {
 
 /**
  * Process a PDF file end-to-end
+ * @param {string} pdfPath - Path to PDF file
+ * @param {number} manualId - Manual ID in database
+ * @param {object} options - Processing options
+ * @param {boolean} options.extractTerms - Extract terms and parts (default: true)
+ * @param {boolean} options.extractSchematics - Extract schematics (default: true)
  */
-async function processPDF(pdfPath, manualId) {
-  console.log('\n🚀 Starting PDF processing...\n');
+async function processPDF(pdfPath, manualId, options = {}) {
+  const { extractTerms = true, extractSchematics = true } = options;
+
+  const isImage = isImageFile(pdfPath);
+  const fileType = isImage ? 'image' : 'PDF';
+
+  console.log(`\n🚀 Starting ${fileType} processing...\n`);
+  if (!extractTerms) {
+    console.log('⚡ Fast mode: Skipping term/part extraction\n');
+  }
 
   try {
     // Update manual status
@@ -465,32 +519,75 @@ async function processPDF(pdfPath, manualId) {
       WHERE id = ${manualId}
     `;
 
-    // Extract text
-    const { text, numPages } = await extractTextFromPDF(pdfPath);
+    let termStats = { stored: 0, skipped: 0 };
+    let partStats = { stored: 0, skipped: 0 };
+    let numPages = 0;
 
-    // Update page count
-    await sql`
-      UPDATE manuals
-      SET page_count = ${numPages}
-      WHERE id = ${manualId}
-    `;
+    if (extractTerms) {
+      // Extract text (from PDF or image)
+      let text, pages;
+      if (isImage) {
+        const result = await extractTextFromImage(pdfPath);
+        text = result.text;
+        pages = result.numPages;
+      } else {
+        const result = await extractTextFromPDF(pdfPath);
+        text = result.text;
+        pages = result.numPages;
+      }
+      numPages = pages;
 
-    console.log(`✓ Extracted ${text.length} characters from ${numPages} pages\n`);
+      // Update page count
+      await sql`
+        UPDATE manuals
+        SET page_count = ${numPages}
+        WHERE id = ${manualId}
+      `;
 
-    // Extract terminology
-    const terms = await extractTerminology(text);
+      console.log(`✓ Extracted ${text.length} characters from ${numPages} pages\n`);
 
-    // Extract parts
-    const parts = await extractParts(text);
+      // Extract terminology
+      const terms = await extractTerminology(text);
 
-    // Store terminology and parts in database
-    const termStats = await storeTerminology(terms, manualId);
-    const partStats = await storeParts(parts, manualId);
+      // Extract parts
+      const parts = await extractParts(text);
 
-    // NEW: Schematic analysis using Fireworks Llama4 Maverick
-    console.log(''); // blank line for readability
-    const { analyzePDFSchematics } = require('./schematic-analyzer');
-    const schematicStats = await analyzePDFSchematics(pdfPath, manualId);
+      // Store terminology and parts in database
+      termStats = await storeTerminology(terms, manualId);
+      partStats = await storeParts(parts, manualId);
+    }
+
+    // Schematic analysis using Fireworks Llama4 Maverick
+    let schematicStats = { schematicsFound: 0, totalPages: 0 };
+    if (extractSchematics) {
+      console.log(''); // blank line for readability
+
+      if (isImage) {
+        // For single images, analyze directly
+        const { analyzePageImage, storeSchematicData } = require('./schematic-analyzer');
+        console.log('🔬 Analyzing image for schematics...');
+
+        try {
+          const analysis = await analyzePageImage(pdfPath, 1);
+
+          if (analysis && analysis.schematic_detected) {
+            console.log(`  ✓ Schematic detected (${analysis.schematic_type}) with ${analysis.components?.length || 0} components`);
+            await storeSchematicData(manualId, 1, pdfPath, analysis);
+            schematicStats = { schematicsFound: 1, totalPages: 1 };
+          } else {
+            console.log('  ○ No schematic detected');
+            schematicStats = { schematicsFound: 0, totalPages: 1 };
+          }
+        } catch (error) {
+          console.error('  ✗ Error analyzing image:', error.message);
+          schematicStats = { schematicsFound: 0, totalPages: 1 };
+        }
+      } else {
+        // For PDFs, use the normal PDF schematic analysis
+        const { analyzePDFSchematics } = require('./schematic-analyzer');
+        schematicStats = await analyzePDFSchematics(pdfPath, manualId);
+      }
+    }
 
     // Update manual status
     await sql`
@@ -501,10 +598,14 @@ async function processPDF(pdfPath, manualId) {
       WHERE id = ${manualId}
     `;
 
-    console.log('\n✅ PDF processing complete!');
-    console.log(`   Terms: ${termStats.stored} new, ${termStats.skipped} existing`);
-    console.log(`   Parts: ${partStats.stored} new, ${partStats.skipped} existing`);
-    console.log(`   Schematics: ${schematicStats.schematicsFound} found in ${schematicStats.totalPages || 0} pages`);
+    console.log(`\n✅ ${fileType} processing complete!`);
+    if (extractTerms) {
+      console.log(`   Terms: ${termStats.stored} new, ${termStats.skipped} existing`);
+      console.log(`   Parts: ${partStats.stored} new, ${partStats.skipped} existing`);
+    }
+    if (extractSchematics) {
+      console.log(`   Schematics: ${schematicStats.schematicsFound} found in ${schematicStats.totalPages || 0} ${isImage ? 'image' : 'pages'}`);
+    }
 
     return {
       success: true,
@@ -514,7 +615,7 @@ async function processPDF(pdfPath, manualId) {
     };
 
   } catch (error) {
-    console.error('\n❌ PDF processing failed:', error);
+    console.error(`\n❌ ${fileType} processing failed:`, error);
 
     // Update manual status
     await sql`

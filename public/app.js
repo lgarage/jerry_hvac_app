@@ -4009,3 +4009,382 @@ function showModalAiStatus(mainText, subtext, isComplete = false) {
 function hideModalAiStatus() {
   hideCompactPill();
 }
+
+// ============================================================================
+// PDF Upload Modal Functionality
+// ============================================================================
+
+/**
+ * PDF Upload State Management
+ * States: idle → uploading → processing → complete/canceled
+ */
+let pdfUploadState = {
+  state: 'idle', // 'idle', 'uploading', 'processing', 'complete', 'canceled'
+  selectedFile: null,
+  manualId: null,
+  pollInterval: null
+};
+
+/**
+ * Initialize PDF upload modal
+ */
+function initPdfUploadModal() {
+  const uploadBtn = document.getElementById('uploadPdfBtn');
+  const modal = document.getElementById('pdfUploadModal');
+  const closeBtn = document.getElementById('closePdfModal');
+  const cancelBtn = document.getElementById('pdfCancelBtn');
+  const dropZone = document.getElementById('pdfDropZone');
+  const fileInput = document.getElementById('pdfFileInput');
+  const uploadStartBtn = document.getElementById('pdfUploadStartBtn');
+  const changeFileBtn = document.getElementById('pdfChangeFile');
+  const cancelUploadBtn = document.getElementById('pdfCancelUploadBtn');
+  const backToHomeBtn = document.getElementById('pdfBackToHomeBtn');
+  const viewResultsBtn = document.getElementById('pdfViewResultsBtn');
+
+  if (!uploadBtn || !modal) return;
+
+  // Open modal
+  uploadBtn.addEventListener('click', () => {
+    pdfResetModal();
+    modal.classList.remove('hidden');
+  });
+
+  // Close modal (X button)
+  closeBtn?.addEventListener('click', () => {
+    if (pdfUploadState.state === 'processing' || pdfUploadState.state === 'uploading') {
+      // Don't allow closing while processing without confirmation
+      return;
+    }
+    pdfCloseModal();
+  });
+
+  // Cancel button (before upload starts)
+  cancelBtn?.addEventListener('click', () => {
+    pdfCloseModal();
+  });
+
+  // Drop zone click
+  dropZone?.addEventListener('click', () => {
+    fileInput?.click();
+  });
+
+  // File selection
+  fileInput?.addEventListener('change', (e) => {
+    pdfHandleFileSelect(e.target.files[0]);
+  });
+
+  // Change file button
+  changeFileBtn?.addEventListener('click', () => {
+    fileInput?.click();
+  });
+
+  // Drag and drop
+  dropZone?.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.style.borderColor = '#764ba2';
+    dropZone.style.background = '#f0f1f3';
+  });
+
+  dropZone?.addEventListener('dragleave', () => {
+    dropZone.style.borderColor = '#667eea';
+    dropZone.style.background = '#f8f9fa';
+  });
+
+  dropZone?.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.style.borderColor = '#667eea';
+    dropZone.style.background = '#f8f9fa';
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      pdfHandleFileSelect(files[0]);
+    }
+  });
+
+  // Upload start button
+  uploadStartBtn?.addEventListener('click', () => {
+    pdfStartUpload();
+  });
+
+  // Cancel upload button (during processing)
+  cancelUploadBtn?.addEventListener('click', () => {
+    pdfCancelUpload();
+  });
+
+  // Back to home button
+  backToHomeBtn?.addEventListener('click', () => {
+    pdfCloseModal();
+  });
+
+  // View results button
+  viewResultsBtn?.addEventListener('click', () => {
+    window.location.href = '/pdf-admin.html';
+  });
+}
+
+/**
+ * Check if file type is supported
+ */
+function isValidManualFile(file) {
+  if (!file) return false;
+
+  const validTypes = [
+    'application/pdf',
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/tiff',
+    'image/bmp'
+  ];
+
+  const validExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp'];
+  const fileName = file.name.toLowerCase();
+  const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
+
+  return validTypes.includes(file.type) || hasValidExtension;
+}
+
+/**
+ * Handle file selection
+ */
+function pdfHandleFileSelect(file) {
+  if (!isValidManualFile(file)) {
+    alert('Please select a valid file (PDF, JPG, PNG, TIFF, or BMP)');
+    return;
+  }
+
+  const maxSize = 50 * 1024 * 1024; // 50MB
+  if (file.size > maxSize) {
+    alert('File size must be less than 50MB');
+    return;
+  }
+
+  pdfUploadState.selectedFile = file;
+
+  // Update UI
+  const fileSelected = document.getElementById('pdfFileSelected');
+  const fileName = document.getElementById('pdfFileName');
+  const fileSize = document.getElementById('pdfFileSize');
+  const uploadBtn = document.getElementById('pdfUploadStartBtn');
+
+  if (fileName) fileName.textContent = file.name;
+  if (fileSize) fileSize.textContent = (file.size / 1024 / 1024).toFixed(2);
+  if (fileSelected) fileSelected.style.display = 'block';
+  if (uploadBtn) uploadBtn.disabled = false;
+}
+
+/**
+ * Start PDF upload
+ */
+async function pdfStartUpload() {
+  if (!pdfUploadState.selectedFile) return;
+
+  // Switch to processing state
+  pdfSetState('uploading');
+  pdfShowState('processing');
+  pdfUpdateProgress(0, 'Uploading PDF...');
+
+  try {
+    const formData = new FormData();
+    formData.append('pdf', pdfUploadState.selectedFile);
+
+    // Check if schematics-only mode is enabled
+    const schematicsOnly = document.getElementById('pdfSchematicsOnly')?.checked;
+    const url = schematicsOnly
+      ? '/api/manuals/upload?schematicsOnly=true'
+      : '/api/manuals/upload';
+
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData
+    });
+
+    const result = await response.json();
+
+    if (result.success) {
+      pdfUploadState.manualId = result.manual.id;
+      pdfSetState('processing');
+      pdfUpdateProgress(25, 'Processing PDF...');
+
+      // Start polling for status
+      pdfStartStatusPolling();
+    } else {
+      throw new Error(result.error || 'Upload failed');
+    }
+  } catch (error) {
+    console.error('Upload error:', error);
+    alert('Upload failed: ' + error.message);
+    pdfResetModal();
+    pdfShowState('select');
+  }
+}
+
+/**
+ * Start polling for PDF processing status
+ */
+function pdfStartStatusPolling() {
+  if (pdfUploadState.pollInterval) {
+    clearInterval(pdfUploadState.pollInterval);
+  }
+
+  pdfUploadState.pollInterval = setInterval(async () => {
+    try {
+      const response = await fetch(`/api/manuals/${pdfUploadState.manualId}`);
+      const result = await response.json();
+
+      if (result.manual) {
+        const manual = result.manual;
+
+        // Update progress based on status
+        if (manual.status === 'processing') {
+          pdfUpdateProgress(50, 'Extracting text and analyzing...');
+        } else if (manual.status === 'completed') {
+          pdfUpdateProgress(100, 'Complete!');
+          pdfSetState('complete');
+          pdfStopStatusPolling();
+
+          // Show completion state
+          setTimeout(() => {
+            pdfShowCompletionStats(manual);
+          }, 500);
+        } else if (manual.status === 'failed') {
+          pdfStopStatusPolling();
+          alert('Processing failed: ' + (manual.error_message || 'Unknown error'));
+          pdfResetModal();
+          pdfShowState('select');
+        }
+      }
+    } catch (error) {
+      console.error('Status polling error:', error);
+    }
+  }, 2000); // Poll every 2 seconds
+}
+
+/**
+ * Stop status polling
+ */
+function pdfStopStatusPolling() {
+  if (pdfUploadState.pollInterval) {
+    clearInterval(pdfUploadState.pollInterval);
+    pdfUploadState.pollInterval = null;
+  }
+}
+
+/**
+ * Cancel PDF upload/processing
+ */
+async function pdfCancelUpload() {
+  const confirmed = confirm('Are you sure you want to cancel this upload? The PDF will be deleted.');
+
+  if (!confirmed) return;
+
+  pdfStopStatusPolling();
+
+  // Delete the manual if it was created
+  if (pdfUploadState.manualId) {
+    try {
+      await fetch(`/api/manuals/${pdfUploadState.manualId}`, {
+        method: 'DELETE'
+      });
+    } catch (error) {
+      console.error('Error deleting manual:', error);
+    }
+  }
+
+  pdfSetState('canceled');
+  pdfResetModal();
+  pdfCloseModal();
+}
+
+/**
+ * Update progress UI
+ */
+function pdfUpdateProgress(percent, message) {
+  const progressBar = document.getElementById('pdfProgressBar');
+  const statusText = document.getElementById('pdfStatusText');
+
+  if (progressBar) progressBar.style.width = percent + '%';
+  if (statusText) statusText.textContent = message;
+}
+
+/**
+ * Show completion stats
+ */
+function pdfShowCompletionStats(manual) {
+  pdfShowState('complete');
+
+  const statsDiv = document.getElementById('pdfStats');
+  if (statsDiv && manual) {
+    statsDiv.innerHTML = `
+      <div style="font-size: 14px;">
+        <div style="margin-bottom: 8px;"><strong>📄 Filename:</strong> ${manual.filename || 'N/A'}</div>
+        <div style="margin-bottom: 8px;"><strong>📊 Pages:</strong> ${manual.page_count || 'N/A'}</div>
+        <div style="margin-bottom: 8px;"><strong>⏱️ Processed:</strong> ${new Date(manual.processed_at).toLocaleString()}</div>
+        <div><strong>✅ Status:</strong> <span style="color: #10b981; font-weight: 600;">Completed</span></div>
+      </div>
+    `;
+  }
+}
+
+/**
+ * Set upload state
+ */
+function pdfSetState(state) {
+  pdfUploadState.state = state;
+}
+
+/**
+ * Show specific state UI
+ */
+function pdfShowState(state) {
+  const selectState = document.getElementById('pdfSelectState');
+  const processingState = document.getElementById('pdfProcessingState');
+  const completeState = document.getElementById('pdfCompleteState');
+
+  if (selectState) selectState.style.display = state === 'select' ? 'block' : 'none';
+  if (processingState) processingState.style.display = state === 'processing' ? 'block' : 'none';
+  if (completeState) completeState.style.display = state === 'complete' ? 'block' : 'none';
+}
+
+/**
+ * Reset modal to initial state
+ */
+function pdfResetModal() {
+  pdfStopStatusPolling();
+  pdfUploadState = {
+    state: 'idle',
+    selectedFile: null,
+    manualId: null,
+    pollInterval: null
+  };
+
+  // Reset UI
+  const fileSelected = document.getElementById('pdfFileSelected');
+  const uploadBtn = document.getElementById('pdfUploadStartBtn');
+  const fileInput = document.getElementById('pdfFileInput');
+  const schematicsOnly = document.getElementById('pdfSchematicsOnly');
+
+  if (fileSelected) fileSelected.style.display = 'none';
+  if (uploadBtn) uploadBtn.disabled = true;
+  if (fileInput) fileInput.value = '';
+  if (schematicsOnly) schematicsOnly.checked = false;
+
+  pdfShowState('select');
+  pdfUpdateProgress(0, 'Initializing...');
+}
+
+/**
+ * Close modal
+ */
+function pdfCloseModal() {
+  const modal = document.getElementById('pdfUploadModal');
+  if (modal) modal.classList.add('hidden');
+  pdfResetModal();
+}
+
+// Initialize PDF upload modal when DOM is loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initPdfUploadModal);
+} else {
+  initPdfUploadModal();
+}

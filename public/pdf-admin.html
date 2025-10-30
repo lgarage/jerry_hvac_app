@@ -274,6 +274,12 @@
         <div class="upload-hint">PDF files only • Maximum 50MB</div>
         <input type="file" id="fileInput" accept=".pdf" />
       </div>
+      <div style="margin: 12px 0; display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" id="schematicsOnly" style="width: auto; cursor: pointer;" />
+        <label for="schematicsOnly" style="cursor: pointer; user-select: none;">
+          ⚡ Fast mode: Extract schematics only (skip term/part extraction)
+        </label>
+      </div>
       <button class="btn" id="uploadBtn" style="display: none;">Upload PDF</button>
     </div>
 
@@ -343,11 +349,17 @@
       const formData = new FormData();
       formData.append('pdf', selectedFile);
 
+      // Check if schematics-only mode is enabled
+      const schematicsOnly = document.getElementById('schematicsOnly').checked;
+      const url = schematicsOnly
+        ? '/api/manuals/upload?schematicsOnly=true'
+        : '/api/manuals/upload';
+
       uploadBtn.disabled = true;
       uploadBtn.textContent = 'Uploading...';
 
       try {
-        const response = await fetch('/api/manuals/upload', {
+        const response = await fetch(url, {
           method: 'POST',
           body: formData
         });
