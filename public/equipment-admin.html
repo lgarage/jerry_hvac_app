@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jerry HVAC - Equipment Admin</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 20px 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .header h1 {
+      color: #1a202c;
+      font-size: 28px;
+      margin-bottom: 5px;
+    }
+
+    .header p {
+      color: #718096;
+      font-size: 14px;
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .nav-tab {
+      background: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .nav-tab:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+
+    .nav-tab.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .card h2 {
+      color: #1a202c;
+      font-size: 20px;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #e2e8f0;
+    }
+
+    .section {
+      display: none;
+    }
+
+    .section.active {
+      display: block;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .stat-card h3 {
+      font-size: 32px;
+      margin-bottom: 5px;
+    }
+
+    .stat-card p {
+      font-size: 14px;
+      opacity: 0.9;
+    }
+
+    .import-section {
+      margin-bottom: 30px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 200px;
+      padding: 12px;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      resize: vertical;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+
+    .button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .button-secondary {
+      background: #e2e8f0;
+      color: #1a202c;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+
+    thead {
+      background: #f7fafc;
+    }
+
+    th {
+      text-align: left;
+      padding: 12px;
+      font-weight: 600;
+      color: #4a5568;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 2px solid #e2e8f0;
+    }
+
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 14px;
+      color: #2d3748;
+    }
+
+    tr:hover {
+      background: #f7fafc;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge-success {
+      background: #c6f6d5;
+      color: #22543d;
+    }
+
+    .badge-info {
+      background: #bee3f8;
+      color: #2c5282;
+    }
+
+    .alert {
+      padding: 15px 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+
+    .alert-success {
+      background: #c6f6d5;
+      color: #22543d;
+      border-left: 4px solid #38a169;
+    }
+
+    .alert-error {
+      background: #fed7d7;
+      color: #742a2a;
+      border-left: 4px solid #e53e3e;
+    }
+
+    .alert-info {
+      background: #bee3f8;
+      color: #2c5282;
+      border-left: 4px solid #3182ce;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #718096;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #718096;
+    }
+
+    .empty-state h3 {
+      font-size: 18px;
+      margin-bottom: 10px;
+      color: #4a5568;
+    }
+
+    .csv-help {
+      background: #edf2f7;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 15px;
+      font-size: 13px;
+      color: #2d3748;
+    }
+
+    .csv-help code {
+      background: #cbd5e0;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div>
+        <h1>🔧 Jerry HVAC - Equipment Admin</h1>
+        <p>Phase 1 MVP: Equipment & Job Management</p>
+      </div>
+      <a href="/" style="text-decoration: none;">
+        <button class="button button-secondary">← Back to Main</button>
+      </a>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="nav-tabs">
+      <button class="nav-tab active" onclick="showSection('overview')">📊 Overview</button>
+      <button class="nav-tab" onclick="showSection('import')">📥 Import Equipment</button>
+      <button class="nav-tab" onclick="showSection('customers')">👥 Customers</button>
+      <button class="nav-tab" onclick="showSection('equipment')">🔧 Equipment</button>
+      <button class="nav-tab" onclick="showSection('jobs')">📋 Jobs</button>
+    </div>
+
+    <!-- Overview Section -->
+    <div id="overview-section" class="section active">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <h3 id="stat-customers">0</h3>
+          <p>Customers</p>
+        </div>
+        <div class="stat-card">
+          <h3 id="stat-equipment">0</h3>
+          <p>Equipment Units</p>
+        </div>
+        <div class="stat-card">
+          <h3 id="stat-jobs">0</h3>
+          <p>Service Jobs</p>
+        </div>
+        <div class="stat-card">
+          <h3 id="stat-completed">0</h3>
+          <p>Completed Jobs</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Recent Activity</h2>
+        <div id="recent-activity">
+          <div class="loading">Loading recent activity...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Section -->
+    <div id="import-section" class="section">
+      <div class="card">
+        <h2>Import Equipment from CSV</h2>
+
+        <div class="import-section">
+          <div class="csv-help">
+            <strong>CSV Format:</strong><br>
+            First row must be headers. Supported columns:<br>
+            <code>customer_name</code>, <code>location</code>, <code>equipment_name</code>,
+            <code>manufacturer</code>, <code>model</code>, <code>serial_number</code>,
+            <code>tonnage</code>, <code>refrigerant</code>, <code>voltage</code><br><br>
+            <strong>Example:</strong><br>
+            <code>customer_name,location,manufacturer,model,serial_number,tonnage</code><br>
+            <code>Planet Fitness,Downtown,York,YCAV0036EC300AAAA,12345678,3.0</code>
+          </div>
+
+          <textarea id="csvInput" placeholder="Paste CSV data here...
+
+customer_name,location,manufacturer,model,serial_number,tonnage
+Planet Fitness,Downtown,York,YCAV0036EC300AAAA,12345678,3.0
+Planet Fitness,Mall Location,Carrier,50TCQ06A3A6A0A0A0,87654321,5.0"></textarea>
+
+          <div style="margin-top: 15px; display: flex; gap: 10px;">
+            <button class="button" onclick="importCSV()">📥 Import CSV</button>
+            <button class="button button-secondary" onclick="clearCSV()">🗑️ Clear</button>
+          </div>
+        </div>
+
+        <div id="import-results"></div>
+      </div>
+    </div>
+
+    <!-- Customers Section -->
+    <div id="customers-section" class="section">
+      <div class="card">
+        <h2>Customers</h2>
+        <div id="customers-list">
+          <div class="loading">Loading customers...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Equipment Section -->
+    <div id="equipment-section" class="section">
+      <div class="card">
+        <h2>Equipment</h2>
+        <div id="equipment-list">
+          <div class="loading">Loading equipment...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Jobs Section -->
+    <div id="jobs-section" class="section">
+      <div class="card">
+        <h2>Jobs</h2>
+        <div id="jobs-list">
+          <div class="loading">Loading jobs...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+
+    // Navigation
+    function showSection(section) {
+      // Update tabs
+      document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
+      event.target.classList.add('active');
+
+      // Update sections
+      document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
+      document.getElementById(`${section}-section`).classList.add('active');
+
+      // Load data for section
+      if (section === 'customers') loadCustomers();
+      if (section === 'equipment') loadEquipment();
+      if (section === 'jobs') loadJobs();
+    }
+
+    // Load Overview Stats
+    async function loadOverview() {
+      try {
+        const [customers, equipment, jobs] = await Promise.all([
+          fetch(`${API_BASE}/api/customers`).then(r => r.json()),
+          fetch(`${API_BASE}/api/equipment`).then(r => r.json()),
+          fetch(`${API_BASE}/api/jobs`).then(r => r.json())
+        ]);
+
+        document.getElementById('stat-customers').textContent = customers.count || 0;
+        document.getElementById('stat-equipment').textContent = equipment.count || 0;
+        document.getElementById('stat-jobs').textContent = jobs.count || 0;
+
+        const completedJobs = jobs.jobs ? jobs.jobs.filter(j => j.status === 'completed').length : 0;
+        document.getElementById('stat-completed').textContent = completedJobs;
+
+        // Show recent activity
+        const activityDiv = document.getElementById('recent-activity');
+        if (!jobs.jobs || jobs.jobs.length === 0) {
+          activityDiv.innerHTML = '<div class="empty-state"><h3>No jobs yet</h3><p>Import equipment and create your first job</p></div>';
+        } else {
+          const recentJobs = jobs.jobs.slice(0, 5);
+          activityDiv.innerHTML = `
+            <table>
+              <thead>
+                <tr>
+                  <th>Job Number</th>
+                  <th>Customer</th>
+                  <th>Equipment</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${recentJobs.map(job => `
+                  <tr>
+                    <td><strong>${job.job_number}</strong></td>
+                    <td>${job.customer_name || 'N/A'}</td>
+                    <td>${job.equipment_name || 'N/A'}</td>
+                    <td><span class="badge badge-info">${job.status}</span></td>
+                    <td>${new Date(job.created_at).toLocaleDateString()}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+        }
+
+      } catch (error) {
+        console.error('Error loading overview:', error);
+      }
+    }
+
+    // Load Customers
+    async function loadCustomers() {
+      try {
+        const response = await fetch(`${API_BASE}/api/customers`);
+        const data = await response.json();
+
+        const customersDiv = document.getElementById('customers-list');
+
+        if (!data.customers || data.customers.length === 0) {
+          customersDiv.innerHTML = '<div class="empty-state"><h3>No customers yet</h3><p>Import equipment to create customers</p></div>';
+          return;
+        }
+
+        customersDiv.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th>Location</th>
+                <th>City, State</th>
+                <th>Contact</th>
+                <th>Equipment</th>
+                <th>Jobs</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.customers.map(customer => `
+                <tr>
+                  <td><strong>${customer.name}</strong></td>
+                  <td>${customer.location || '-'}</td>
+                  <td>${customer.city ? customer.city + ', ' + (customer.state || '') : '-'}</td>
+                  <td>${customer.contact_name || '-'}<br>${customer.contact_phone || ''}</td>
+                  <td><span class="badge badge-info">${customer.equipment_count || 0}</span></td>
+                  <td><span class="badge badge-success">${customer.job_count || 0}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+
+      } catch (error) {
+        console.error('Error loading customers:', error);
+        document.getElementById('customers-list').innerHTML = '<div class="alert alert-error">Error loading customers</div>';
+      }
+    }
+
+    // Load Equipment
+    async function loadEquipment() {
+      try {
+        const response = await fetch(`${API_BASE}/api/equipment`);
+        const data = await response.json();
+
+        const equipmentDiv = document.getElementById('equipment-list');
+
+        if (!data.equipment || data.equipment.length === 0) {
+          equipmentDiv.innerHTML = '<div class="empty-state"><h3>No equipment yet</h3><p>Use the Import tab to add equipment from CSV</p></div>';
+          return;
+        }
+
+        equipmentDiv.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th>Location</th>
+                <th>Equipment</th>
+                <th>Manufacturer</th>
+                <th>Model</th>
+                <th>Serial</th>
+                <th>Tonnage</th>
+                <th>Refrigerant</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.equipment.map(eq => `
+                <tr>
+                  <td><strong>${eq.customer_name}</strong></td>
+                  <td>${eq.customer_location || '-'}</td>
+                  <td>${eq.equipment_name || '-'}</td>
+                  <td>${eq.manufacturer || '-'}</td>
+                  <td>${eq.model}</td>
+                  <td>${eq.serial_number || '-'}</td>
+                  <td>${eq.tonnage ? eq.tonnage + ' ton' : '-'}</td>
+                  <td>${eq.refrigerant || '-'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+
+      } catch (error) {
+        console.error('Error loading equipment:', error);
+        document.getElementById('equipment-list').innerHTML = '<div class="alert alert-error">Error loading equipment</div>';
+      }
+    }
+
+    // Load Jobs
+    async function loadJobs() {
+      try {
+        const response = await fetch(`${API_BASE}/api/jobs`);
+        const data = await response.json();
+
+        const jobsDiv = document.getElementById('jobs-list');
+
+        if (!data.jobs || data.jobs.length === 0) {
+          jobsDiv.innerHTML = '<div class="empty-state"><h3>No jobs yet</h3><p>Create your first service job</p></div>';
+          return;
+        }
+
+        jobsDiv.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Job Number</th>
+                <th>Customer</th>
+                <th>Location</th>
+                <th>Equipment</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.jobs.map(job => `
+                <tr>
+                  <td><strong>${job.job_number}</strong></td>
+                  <td>${job.customer_name || 'N/A'}</td>
+                  <td>${job.customer_location || '-'}</td>
+                  <td>${job.equipment_name || '-'}<br><small>${job.model || ''}</small></td>
+                  <td><span class="badge badge-info">${job.job_type}</span></td>
+                  <td><span class="badge ${job.status === 'completed' ? 'badge-success' : 'badge-info'}">${job.status}</span></td>
+                  <td>${new Date(job.created_at).toLocaleDateString()}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+
+      } catch (error) {
+        console.error('Error loading jobs:', error);
+        document.getElementById('jobs-list').innerHTML = '<div class="alert alert-error">Error loading jobs</div>';
+      }
+    }
+
+    // Import CSV
+    async function importCSV() {
+      const csvData = document.getElementById('csvInput').value.trim();
+
+      if (!csvData) {
+        alert('Please paste CSV data first');
+        return;
+      }
+
+      const resultsDiv = document.getElementById('import-results');
+      resultsDiv.innerHTML = '<div class="alert alert-info">Importing... Please wait.</div>';
+
+      try {
+        const response = await fetch(`${API_BASE}/api/equipment/import-csv`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csvData })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          resultsDiv.innerHTML = `
+            <div class="alert alert-success">
+              <strong>✅ Import successful!</strong><br>
+              • Created ${data.imported.customers} new customer(s)<br>
+              • Created ${data.imported.equipment} new equipment unit(s)<br>
+              ${data.imported.errors.length > 0 ? `• ${data.imported.errors.length} row(s) had errors` : ''}
+            </div>
+          `;
+
+          if (data.imported.errors.length > 0) {
+            console.error('Import errors:', data.imported.errors);
+          }
+
+          // Reload overview stats
+          loadOverview();
+        } else {
+          resultsDiv.innerHTML = `<div class="alert alert-error">❌ Import failed: ${data.error}</div>`;
+        }
+
+      } catch (error) {
+        console.error('Error importing CSV:', error);
+        resultsDiv.innerHTML = `<div class="alert alert-error">❌ Import failed: ${error.message}</div>`;
+      }
+    }
+
+    // Clear CSV
+    function clearCSV() {
+      document.getElementById('csvInput').value = '';
+      document.getElementById('import-results').innerHTML = '';
+    }
+
+    // Load overview on page load
+    loadOverview();
+  </script>
+</body>
+</html>
