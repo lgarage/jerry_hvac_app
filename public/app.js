@@ -1785,6 +1785,56 @@ async function submitToBackend(audio, text) {
 }
 
 function displayResults(result) {
+  // Handle conversational messages (chat responses)
+  if (result.message_type === 'conversational' && result.response) {
+    // Show chat section
+    const chatSection = document.getElementById('chatSection');
+    const chatHistory = document.getElementById('chatHistory');
+    chatSection.classList.add('visible');
+
+    // Add user message
+    const userMsg = createChatMessage('user', result.transcription || result.raw_transcription);
+    chatHistory.appendChild(userMsg);
+
+    // Add Jerry's response
+    const assistantMsg = createChatMessage('assistant', result.response);
+    chatHistory.appendChild(assistantMsg);
+
+    // Scroll to bottom
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+
+    // Clear the input
+    jobNotesTextarea.value = '';
+
+    // Hide parts section if no repairs
+    if (!result.repairs || result.repairs.length === 0) {
+      resultsSection.classList.remove('visible');
+    }
+
+    showStatus('💬 Response from Jerry', 'success');
+    return; // Don't process as parts documentation
+  }
+
+  // Handle mixed messages (both chat and parts)
+  if (result.message_type === 'mixed' && result.chat_response) {
+    const chatSection = document.getElementById('chatSection');
+    const chatHistory = document.getElementById('chatHistory');
+    chatSection.classList.add('visible');
+
+    // Add user message
+    const userMsg = createChatMessage('user', result.transcription || result.raw_transcription);
+    chatHistory.appendChild(userMsg);
+
+    // Add Jerry's response
+    const assistantMsg = createChatMessage('assistant', result.chat_response);
+    chatHistory.appendChild(assistantMsg);
+
+    // Scroll to bottom
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+
+    // Continue to show parts below
+  }
+
   // Handle voice commands (add part/term) differently
   if (result.command_type === 'add_part' || result.command_type === 'add_term') {
     const commandName = result.command_type === 'add_part' ? 'Part' : 'Term';
@@ -4388,3 +4438,55 @@ if (document.readyState === 'loading') {
 } else {
   initPdfUploadModal();
 }
+
+// ========== CHAT FUNCTIONS ==========
+
+/**
+ * Create a chat message element
+ */
+function createChatMessage(role, content) {
+  const messageDiv = document.createElement('div');
+  messageDiv.className = `chat-message ${role}`;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'chat-avatar';
+  avatar.textContent = role === 'user' ? '👤' : 'J';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble';
+
+  // Convert markdown-style formatting to HTML
+  let htmlContent = content
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // Bold
+    .replace(/\*(.*?)\*/g, '<em>$1</em>') // Italic
+    .replace(/\n/g, '<br>'); // Line breaks
+
+  bubble.innerHTML = htmlContent;
+
+  messageDiv.appendChild(avatar);
+  messageDiv.appendChild(bubble);
+
+  return messageDiv;
+}
+
+/**
+ * Clear chat history
+ */
+function clearChatHistory() {
+  const chatHistory = document.getElementById('chatHistory');
+  const chatSection = document.getElementById('chatSection');
+
+  if (confirm('Are you sure you want to clear the conversation history?')) {
+    chatHistory.innerHTML = '';
+    chatSection.classList.remove('visible');
+    showStatus('Chat history cleared', 'info');
+  }
+}
+
+// Initialize chat functionality
+document.addEventListener('DOMContentLoaded', () => {
+  const clearChatBtn = document.getElementById('clearChatBtn');
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener('click', clearChatHistory);
+  }
+});

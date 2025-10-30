@@ -366,6 +366,85 @@
         display: none;
       }
 
+      /* Chat History Styles */
+      .chat-history {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        max-height: 600px;
+        overflow-y: auto;
+      }
+
+      .chat-message {
+        display: flex;
+        gap: 12px;
+        animation: slideIn 0.3s ease;
+      }
+
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .chat-message.user {
+        flex-direction: row-reverse;
+      }
+
+      .chat-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        flex-shrink: 0;
+      }
+
+      .chat-message.user .chat-avatar {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      }
+
+      .chat-message.assistant .chat-avatar {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        font-weight: 600;
+        font-size: 16px;
+      }
+
+      .chat-bubble {
+        max-width: 70%;
+        padding: 12px 16px;
+        border-radius: 16px;
+        line-height: 1.5;
+        word-wrap: break-word;
+      }
+
+      .chat-message.user .chat-bubble {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-bottom-right-radius: 4px;
+      }
+
+      .chat-message.assistant .chat-bubble {
+        background: #f3f4f6;
+        color: #1f2937;
+        border-bottom-left-radius: 4px;
+        border: 1px solid #e5e7eb;
+      }
+
+      .chat-timestamp {
+        font-size: 0.75rem;
+        color: #9ca3af;
+        margin-top: 4px;
+      }
+
       .loading-spinner {
         display: inline-block;
         width: 16px;
@@ -1031,6 +1110,17 @@
             <textarea id="floatingTextarea" placeholder="Type your repair notes or search term..." rows="3"></textarea>
             <button id="floatingSubmit" class="floating-submit-btn">Send</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Chat History Section -->
+      <div id="chatSection" class="results-section">
+        <div class="card">
+          <h2 style="margin-bottom: 16px; color: #1f2937; display: flex; align-items: center; gap: 8px;">
+            💬 Conversation with Jerry
+            <button id="clearChatBtn" style="margin-left: auto; background: #6b7280; color: white; padding: 6px 12px; border: none; border-radius: 6px; font-size: 0.85rem; cursor: pointer;">Clear</button>
+          </h2>
+          <div id="chatHistory" class="chat-history"></div>
         </div>
       </div>
 
