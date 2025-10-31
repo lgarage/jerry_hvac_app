@@ -275,6 +275,56 @@
       border-radius: 3px;
       font-family: 'Courier New', monospace;
     }
+
+    .upload-zone {
+      border: 3px dashed #cbd5e0;
+      border-radius: 12px;
+      padding: 40px 20px;
+      text-align: center;
+      margin-bottom: 20px;
+      transition: all 0.3s;
+      cursor: pointer;
+      background: #f7fafc;
+    }
+
+    .upload-zone:hover {
+      border-color: #667eea;
+      background: #edf2f7;
+    }
+
+    .upload-zone.drag-over {
+      border-color: #667eea;
+      background: #e6fffa;
+      border-style: solid;
+    }
+
+    .upload-zone h3 {
+      color: #4a5568;
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .upload-zone p {
+      color: #718096;
+      font-size: 14px;
+    }
+
+    .upload-icon {
+      font-size: 48px;
+      margin-bottom: 15px;
+    }
+
+    #fileInput {
+      display: none;
+    }
+
+    .or-divider {
+      text-align: center;
+      margin: 20px 0;
+      color: #718096;
+      font-size: 14px;
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -334,6 +384,16 @@
         <h2>Import Equipment from CSV</h2>
 
         <div class="import-section">
+          <!-- File Upload Zone -->
+          <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+            <div class="upload-icon">📁</div>
+            <h3>Drop CSV file here or click to browse</h3>
+            <p>Supports .csv files with equipment data</p>
+            <input type="file" id="fileInput" accept=".csv,text/csv" onchange="handleFileSelect(event)">
+          </div>
+
+          <div class="or-divider">— OR PASTE CSV DATA —</div>
+
           <div class="csv-help">
             <strong>CSV Format:</strong><br>
             First row must be headers. Supported columns:<br>
@@ -608,6 +668,65 @@ Planet Fitness,Mall Location,Carrier,50TCQ06A3A6A0A0A0,87654321,5.0"></textarea>
       }
     }
 
+    // File Upload Handlers
+    function handleFileSelect(event) {
+      const file = event.target.files[0];
+      if (file) {
+        readFile(file);
+      }
+    }
+
+    function readFile(file) {
+      if (!file.name.endsWith('.csv')) {
+        alert('Please select a CSV file');
+        return;
+      }
+
+      const reader = new FileReader();
+
+      reader.onload = function(e) {
+        const csvData = e.target.result;
+        document.getElementById('csvInput').value = csvData;
+
+        // Auto-import after file is loaded
+        importCSV();
+      };
+
+      reader.onerror = function() {
+        alert('Error reading file. Please try again.');
+      };
+
+      reader.readAsText(file);
+    }
+
+    // Drag and Drop Handlers
+    function setupDragAndDrop() {
+      const uploadZone = document.getElementById('uploadZone');
+
+      uploadZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        uploadZone.classList.add('drag-over');
+      });
+
+      uploadZone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        uploadZone.classList.remove('drag-over');
+      });
+
+      uploadZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        uploadZone.classList.remove('drag-over');
+
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+          readFile(files[0]);
+        }
+      });
+    }
+
     // Import CSV
     async function importCSV() {
       const csvData = document.getElementById('csvInput').value.trim();
@@ -661,8 +780,9 @@ Planet Fitness,Mall Location,Carrier,50TCQ06A3A6A0A0A0,87654321,5.0"></textarea>
       document.getElementById('import-results').innerHTML = '';
     }
 
-    // Load overview on page load
+    // Initialize on page load
     loadOverview();
+    setupDragAndDrop();
   </script>
 </body>
 </html>
