@@ -3125,6 +3125,28 @@ app.get('/api/jobs', async (req, res) => {
   }
 });
 
+// Helper function to parse CSV line (handles quoted values)
+function parseCSVLine(line) {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  values.push(current.trim());
+  return values;
+}
+
 // POST /api/equipment/import-csv - Import equipment from CSV
 app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
   try {
@@ -3136,10 +3158,16 @@ app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
 
     // Parse CSV data
     // Expected format: customer_name,location,equipment_name,manufacturer,model,serial_number,tonnage,refrigerant
-    const lines = csvData.trim().split('\n');
-    const headers = lines[0].toLowerCase().split(',').map(h => h.trim());
+    const lines = csvData.trim().split('\n').filter(line => line.trim().length > 0);
+
+    if (lines.length < 2) {
+      return res.status(400).json({ error: 'CSV must have headers and at least one data row' });
+    }
+
+    const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
 
     console.log('CSV Headers:', headers);
+    console.log('Total rows to process:', lines.length - 1);
 
     const imported = {
       customers: 0,
@@ -3150,19 +3178,38 @@ app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
     // Process each line (skip header)
     for (let i = 1; i < lines.length; i++) {
       try {
-        const values = lines[i].split(',').map(v => v.trim());
+        const values = parseCSVLine(lines[i]);
         const row = {};
 
+        // Build row object, converting empty strings to empty (not null)
         headers.forEach((header, index) => {
-          row[header] = values[index] || null;
+          const value = values[index];
+          row[header] = value && value.trim() ? value.trim() : '';
         });
 
         console.log(`Processing row ${i}:`, row);
 
-        // Find or create customer
+        // Skip rows that are completely empty
+        const hasData = Object.values(row).some(v => v && v.trim());
+        if (!hasData) {
+          console.log(`  Skipping empty row ${i}`);
+          continue;
+        }
+
+        // Validate required fields
         const customerName = row.customer_name || row.customer || '';
         const customerLocation = row.location || row.customer_location || '';
+        const model = row.model || '';
 
+        if (!customerName) {
+          throw new Error('Missing required field: customer_name');
+        }
+
+        if (!model) {
+          throw new Error('Missing required field: model');
+        }
+
+        // Find or create customer
         let customer = await sql`
           SELECT id FROM customers
           WHERE name = ${customerName}
@@ -3203,17 +3250,19 @@ app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
         const existingEquipment = await sql`
           SELECT id FROM equipment
           WHERE customer_id = ${customerId}
-            AND model = ${row.model || ''}
+            AND model = ${model}
             AND serial_number = ${serialNumber}
         `;
 
         if (existingEquipment.length > 0) {
-          console.log(`  Equipment already exists, skipping: ${row.model}`);
+          console.log(`  Equipment already exists, skipping: ${model}`);
           continue;
         }
 
         // Create equipment
         // Use empty strings for VARCHAR fields, keep null only for numeric fields
+        const tonnage = row.tonnage && row.tonnage.trim() ? parseFloat(row.tonnage) : null;
+
         await sql`
           INSERT INTO equipment (
             customer_id,
@@ -3232,9 +3281,9 @@ app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
             ${row.equipment_name || row.name || ''},
             ${row.equipment_type || row.type || 'RTU'},
             ${row.manufacturer || ''},
-            ${row.model || ''},
-            ${row.serial_number || row.serial || ''},
-            ${row.tonnage ? parseFloat(row.tonnage) : sql`NULL::decimal`},
+            ${model},
+            ${serialNumber},
+            ${tonnage},
             ${row.refrigerant || ''},
             ${row.voltage || ''},
             ${row.location_detail || ''},
@@ -3242,7 +3291,7 @@ app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
           )
         `;
         imported.equipment++;
-        console.log(`  Created equipment: ${row.model} (${row.manufacturer})`);
+        console.log(`  Created equipment: ${model} (${row.manufacturer || 'Unknown'})`);
 
       } catch (rowError) {
         console.error(`Error processing row ${i}:`, rowError);
