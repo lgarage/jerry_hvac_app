@@ -3160,14 +3160,18 @@ app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
         console.log(`Processing row ${i}:`, row);
 
         // Find or create customer
+        const customerName = row.customer_name || row.customer || '';
+        const customerLocation = row.location || row.customer_location || '';
+
         let customer = await sql`
           SELECT id FROM customers
-          WHERE name = ${row.customer_name || row.customer}
-            AND location = ${row.location || row.customer_location}
+          WHERE name = ${customerName}
+            AND location = ${customerLocation}
         `;
 
         if (customer.length === 0) {
           // Create new customer
+          // Use empty strings instead of null for VARCHAR fields to avoid type inference issues
           customer = await sql`
             INSERT INTO customers (
               name,
@@ -3178,31 +3182,29 @@ app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
               contact_name,
               contact_phone
             ) VALUES (
-              ${row.customer_name || row.customer},
-              ${row.location || row.customer_location},
-              ${row.address || null},
-              ${row.city || null},
-              ${row.state || null},
-              ${row.contact_name || null},
-              ${row.contact_phone || null}
+              ${customerName},
+              ${customerLocation},
+              ${row.address || ''},
+              ${row.city || ''},
+              ${row.state || ''},
+              ${row.contact_name || ''},
+              ${row.contact_phone || ''}
             )
             RETURNING id
           `;
           imported.customers++;
-          console.log(`  Created customer: ${row.customer_name || row.customer} - ${row.location}`);
+          console.log(`  Created customer: ${customerName} - ${customerLocation}`);
         }
 
         const customerId = customer[0].id;
 
         // Check if equipment already exists
+        const serialNumber = row.serial_number || row.serial || '';
         const existingEquipment = await sql`
           SELECT id FROM equipment
           WHERE customer_id = ${customerId}
-            AND model = ${row.model}
-            AND (
-              serial_number = ${row.serial_number || row.serial}
-              OR (serial_number IS NULL AND ${row.serial_number || row.serial} IS NULL)
-            )
+            AND model = ${row.model || ''}
+            AND serial_number = ${serialNumber}
         `;
 
         if (existingEquipment.length > 0) {
@@ -3211,6 +3213,7 @@ app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
         }
 
         // Create equipment
+        // Use empty strings for VARCHAR fields, keep null only for numeric fields
         await sql`
           INSERT INTO equipment (
             customer_id,
@@ -3226,16 +3229,16 @@ app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
             notes
           ) VALUES (
             ${customerId},
-            ${row.equipment_name || row.name || null},
+            ${row.equipment_name || row.name || ''},
             ${row.equipment_type || row.type || 'RTU'},
-            ${row.manufacturer || null},
-            ${row.model},
-            ${row.serial_number || row.serial || null},
-            ${row.tonnage ? parseFloat(row.tonnage) : null},
-            ${row.refrigerant || null},
-            ${row.voltage || null},
-            ${row.location_detail || null},
-            ${row.notes || null}
+            ${row.manufacturer || ''},
+            ${row.model || ''},
+            ${row.serial_number || row.serial || ''},
+            ${row.tonnage ? parseFloat(row.tonnage) : sql`NULL::decimal`},
+            ${row.refrigerant || ''},
+            ${row.voltage || ''},
+            ${row.location_detail || ''},
+            ${row.notes || ''}
           )
         `;
         imported.equipment++;
