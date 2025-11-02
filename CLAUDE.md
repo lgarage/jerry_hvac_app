@@ -197,3 +197,63 @@ Buttons: never covered; always visible
 
 Scope: active modal only
 ```
+
+---
+
+## 📊 Progress Tracking (Auto-Update Required)
+
+> **IMPORTANT:** This section ensures project context is maintained across sessions.
+
+### At the END of Every Session
+
+**Before stopping work, update `PROGRESS.md`:**
+
+1. **Update "Just Completed" section**
+   - Move completed tasks from checklist
+   - Add what was built/fixed this session
+
+2. **Update Phase 1 Checklist (X/6)**
+   - Mark items complete: `[x]`
+   - Update progress percentage
+
+3. **Update "Last Session Notes"**
+   - What was changed
+   - What was tested
+   - What needs testing
+
+4. **Update "Immediate Next Actions"**
+   - What should be worked on next
+   - Estimated time for each option
+
+5. **Commit PROGRESS.md with code changes**
+   ```bash
+   git add PROGRESS.md [other files]
+   git commit -m "feat: [what was built]"
+   ```
+
+### Why This Matters
+
+- Maintains context across sessions
+- Helps user pick up where they left off
+- Tracks progress toward Phase 1 MVP completion
+- Guides future development priorities
+
+### Quick Update Template
+
+```markdown
+## Just Completed (This Session)
+- ✅ [What you built]
+- ✅ [What you fixed]
+
+## Phase 1 Checklist (X/6 Complete)
+- [x] Item that's now done
+- [ ] Next item to work on
+
+## Last Session Notes
+Date: [Today's date]
+Completed: [Summary]
+Tested: [What works]
+Next: [Immediate action]
+```
+
+**Remember:** Always update PROGRESS.md before committing code! This keeps the project trackable.
