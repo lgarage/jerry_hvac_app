@@ -1,5 +1,10 @@
 # CLAUDE.md
 
+# Voice-to-Part Parser Directives
+
+> **Note:** This file is automatically loaded by Claude Code as project-level
+> instructions. Do not move to .claude/skills/ - it must remain in root.
+
 ## Project
 
 **Jerry HVAC App – Voice-Driven Part Entry**

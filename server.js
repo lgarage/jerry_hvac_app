@@ -221,15 +221,14 @@ app.post('/api/chat', async (req, res) => {
     // System message
     const systemMessage = {
       role: 'system',
-      content: `You are Jerry, an AI assistant for HVAC technicians. You help with:
-- Answering questions about HVAC systems, equipment, and procedures
-- Explaining technical concepts and troubleshooting
-- Referencing uploaded manuals and schematics
-- Providing guidance on repairs and maintenance
+      content: `You are Jerry, a concise AI assistant for HVAC technicians.
 
-${session.uploadedFiles.length > 0 ? `\nUploaded files available for reference: ${session.uploadedFiles.map(f => f.name).join(', ')}` : ''}
+IMPORTANT: Keep responses SHORT (2-3 sentences max) unless the user asks for more detail.
 
-Be helpful, concise, and technical. If you don't know something, say so clearly.`
+Answer questions about HVAC systems, equipment, procedures, and troubleshooting.
+${session.uploadedFiles.length > 0 ? `\nUploaded files: ${session.uploadedFiles.map(f => f.name).join(', ')}` : ''}
+
+Be brief, technical, and direct. If you don't know, say so.`
     };
     contextMessages.push(systemMessage);
 
@@ -248,7 +247,7 @@ Be helpful, concise, and technical. If you don't know something, say so clearly.
       model: 'gpt-4o-mini', // Using mini for cost efficiency, can upgrade to gpt-4o for better responses
       messages: contextMessages,
       temperature: 0.7,
-      max_tokens: 1000
+      max_tokens: 200 // Reduced to encourage concise responses
     });
 
     const jerryResponse = completion.choices[0].message.content.trim();
@@ -3016,6 +3015,557 @@ app.post('/api/manuals/:id/retry', async (req, res) => {
 
   } catch (error) {
     console.error('Error retrying manual:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========================================
+// PHASE 1 MVP: EQUIPMENT & JOB MANAGEMENT
+// ========================================
+
+// GET /api/customers - List all customers
+app.get('/api/customers', async (req, res) => {
+  try {
+    const customers = await sql`
+      SELECT
+        c.*,
+        COUNT(DISTINCT e.id) as equipment_count,
+        COUNT(DISTINCT j.id) as job_count
+      FROM customers c
+      LEFT JOIN equipment e ON e.customer_id = c.id
+      LEFT JOIN jobs j ON j.customer_id = c.id
+      GROUP BY c.id
+      ORDER BY c.name, c.location
+    `;
+
+    res.json({
+      success: true,
+      count: customers.length,
+      customers: customers
+    });
+
+  } catch (error) {
+    console.error('Error fetching customers:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/equipment - List all equipment
+app.get('/api/equipment', async (req, res) => {
+  try {
+    const { customer_id } = req.query;
+
+    let equipment;
+    if (customer_id) {
+      equipment = await sql`
+        SELECT * FROM equipment_with_customer
+        WHERE customer_id = ${customer_id}
+        ORDER BY equipment_name
+      `;
+    } else {
+      equipment = await sql`
+        SELECT * FROM equipment_with_customer
+        ORDER BY customer_name, customer_location, equipment_name
+      `;
+    }
+
+    res.json({
+      success: true,
+      count: equipment.length,
+      equipment: equipment
+    });
+
+  } catch (error) {
+    console.error('Error fetching equipment:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/jobs - List all jobs
+app.get('/api/jobs', async (req, res) => {
+  try {
+    const { status, customer_id, equipment_id } = req.query;
+
+    let jobs;
+    if (status) {
+      jobs = await sql`
+        SELECT * FROM job_summary
+        WHERE status = ${status}
+        ORDER BY created_at DESC
+      `;
+    } else if (customer_id) {
+      jobs = await sql`
+        SELECT * FROM job_summary
+        WHERE customer_id = ${customer_id}
+        ORDER BY created_at DESC
+      `;
+    } else if (equipment_id) {
+      jobs = await sql`
+        SELECT * FROM jobs
+        WHERE equipment_id = ${equipment_id}
+        ORDER BY created_at DESC
+      `;
+    } else {
+      jobs = await sql`
+        SELECT * FROM job_summary
+        ORDER BY created_at DESC
+        LIMIT 100
+      `;
+    }
+
+    res.json({
+      success: true,
+      count: jobs.length,
+      jobs: jobs
+    });
+
+  } catch (error) {
+    console.error('Error fetching jobs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper function to parse CSV line (handles quoted values)
+function parseCSVLine(line) {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  values.push(current.trim());
+  return values;
+}
+
+// POST /api/equipment/import-csv - Import equipment from CSV
+app.post('/api/equipment/import-csv', express.json(), async (req, res) => {
+  try {
+    const { csvData } = req.body;
+
+    if (!csvData) {
+      return res.status(400).json({ error: 'No CSV data provided' });
+    }
+
+    // Parse CSV data
+    // Expected format: customer_name,location,equipment_name,manufacturer,model,serial_number,tonnage,refrigerant
+    const lines = csvData.trim().split('\n').filter(line => line.trim().length > 0);
+
+    if (lines.length < 2) {
+      return res.status(400).json({ error: 'CSV must have headers and at least one data row' });
+    }
+
+    const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
+
+    console.log('CSV Headers:', headers);
+    console.log('Total rows to process:', lines.length - 1);
+
+    const imported = {
+      customers: 0,
+      equipment: 0,
+      errors: []
+    };
+
+    // Process each line (skip header)
+    for (let i = 1; i < lines.length; i++) {
+      try {
+        const values = parseCSVLine(lines[i]);
+        const row = {};
+
+        // Build row object, converting empty strings to empty (not null)
+        headers.forEach((header, index) => {
+          const value = values[index];
+          row[header] = value && value.trim() ? value.trim() : '';
+        });
+
+        console.log(`Processing row ${i}:`, row);
+
+        // Skip rows that are completely empty
+        const hasData = Object.values(row).some(v => v && v.trim());
+        if (!hasData) {
+          console.log(`  Skipping empty row ${i}`);
+          continue;
+        }
+
+        // Validate required fields
+        const customerName = row.customer_name || row.customer || '';
+        const customerLocation = row.location || row.customer_location || '';
+        const model = row.model || '';
+
+        if (!customerName) {
+          throw new Error('Missing required field: customer_name');
+        }
+
+        if (!model) {
+          throw new Error('Missing required field: model');
+        }
+
+        // Find or create customer
+        let customer = await sql`
+          SELECT id FROM customers
+          WHERE name = ${customerName}
+            AND location = ${customerLocation}
+        `;
+
+        if (customer.length === 0) {
+          // Create new customer
+          // Use empty strings instead of null for VARCHAR fields to avoid type inference issues
+          customer = await sql`
+            INSERT INTO customers (
+              name,
+              location,
+              address,
+              city,
+              state,
+              contact_name,
+              contact_phone
+            ) VALUES (
+              ${customerName},
+              ${customerLocation},
+              ${row.address || ''},
+              ${row.city || ''},
+              ${row.state || ''},
+              ${row.contact_name || ''},
+              ${row.contact_phone || ''}
+            )
+            RETURNING id
+          `;
+          imported.customers++;
+          console.log(`  Created customer: ${customerName} - ${customerLocation}`);
+        }
+
+        const customerId = customer[0].id;
+
+        // Check if equipment already exists
+        const serialNumber = row.serial_number || row.serial || '';
+        const existingEquipment = await sql`
+          SELECT id FROM equipment
+          WHERE customer_id = ${customerId}
+            AND model = ${model}
+            AND serial_number = ${serialNumber}
+        `;
+
+        if (existingEquipment.length > 0) {
+          console.log(`  Equipment already exists, skipping: ${model}`);
+          continue;
+        }
+
+        // Create equipment
+        // Use empty strings for VARCHAR fields, keep null only for numeric fields
+        const tonnage = row.tonnage && row.tonnage.trim() ? parseFloat(row.tonnage) : null;
+
+        await sql`
+          INSERT INTO equipment (
+            customer_id,
+            equipment_name,
+            equipment_type,
+            manufacturer,
+            model,
+            serial_number,
+            tonnage,
+            refrigerant,
+            voltage,
+            location_detail,
+            notes
+          ) VALUES (
+            ${customerId},
+            ${row.equipment_name || row.name || ''},
+            ${row.equipment_type || row.type || 'RTU'},
+            ${row.manufacturer || ''},
+            ${model},
+            ${serialNumber},
+            ${tonnage},
+            ${row.refrigerant || ''},
+            ${row.voltage || ''},
+            ${row.location_detail || ''},
+            ${row.notes || ''}
+          )
+        `;
+        imported.equipment++;
+        console.log(`  Created equipment: ${model} (${row.manufacturer || 'Unknown'})`);
+
+      } catch (rowError) {
+        console.error(`Error processing row ${i}:`, rowError);
+        imported.errors.push({
+          row: i,
+          data: lines[i],
+          error: rowError.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'CSV import completed',
+      imported: imported
+    });
+
+  } catch (error) {
+    console.error('Error importing CSV:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/customers - Create a new customer
+app.post('/api/customers', async (req, res) => {
+  try {
+    const { name, location, address, city, state, zip, contact_name, contact_phone, contact_email, notes } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+
+    const customer = await sql`
+      INSERT INTO customers (
+        name, location, address, city, state, zip,
+        contact_name, contact_phone, contact_email, notes
+      ) VALUES (
+        ${name}, ${location}, ${address}, ${city}, ${state}, ${zip},
+        ${contact_name}, ${contact_phone}, ${contact_email}, ${notes}
+      )
+      RETURNING *
+    `;
+
+    res.json({
+      success: true,
+      customer: customer[0]
+    });
+
+  } catch (error) {
+    console.error('Error creating customer:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/equipment - Create new equipment
+app.post('/api/equipment', async (req, res) => {
+  try {
+    const {
+      customer_id, equipment_name, equipment_type, manufacturer,
+      model, serial_number, tonnage, refrigerant, voltage,
+      install_date, location_detail, warranty_expires, notes
+    } = req.body;
+
+    if (!customer_id || !model) {
+      return res.status(400).json({ error: 'customer_id and model are required' });
+    }
+
+    const equipment = await sql`
+      INSERT INTO equipment (
+        customer_id, equipment_name, equipment_type, manufacturer,
+        model, serial_number, tonnage, refrigerant, voltage,
+        install_date, location_detail, warranty_expires, notes
+      ) VALUES (
+        ${customer_id}, ${equipment_name}, ${equipment_type}, ${manufacturer},
+        ${model}, ${serial_number}, ${tonnage}, ${refrigerant}, ${voltage},
+        ${install_date}, ${location_detail}, ${warranty_expires}, ${notes}
+      )
+      RETURNING *
+    `;
+
+    res.json({
+      success: true,
+      equipment: equipment[0]
+    });
+
+  } catch (error) {
+    console.error('Error creating equipment:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/jobs - Create a new job (auto-generates job number in format 0001NRP)
+app.post('/api/jobs', async (req, res) => {
+  try {
+    const {
+      customer_id, equipment_id, job_type, priority,
+      problem_description, scheduled_date, location_code
+    } = req.body;
+
+    if (!customer_id) {
+      return res.status(400).json({ error: 'customer_id is required' });
+    }
+
+    // Job number is auto-generated by trigger in format: 0001NRP
+    // Format: [4-digit sequential][location code][2-letter job type code]
+    // Examples: 0001NRP (Repair), 0002NQR (Quoted Repair), 0003NSC (Service Call), 0004NPM (PM)
+    const job = await sql`
+      INSERT INTO jobs (
+        customer_id, equipment_id, job_type, priority,
+        problem_description, scheduled_date, status, location_code
+      ) VALUES (
+        ${customer_id}, ${equipment_id}, ${job_type || 'service'},
+        ${priority || 'normal'}, ${problem_description},
+        ${scheduled_date || null}, 'scheduled', ${location_code || 'N'}
+      )
+      RETURNING *
+    `;
+
+    console.log(`✓ Created job: ${job[0].job_number} (${job[0].job_type})`);
+
+    res.json({
+      success: true,
+      job: job[0]
+    });
+
+  } catch (error) {
+    console.error('Error creating job:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH /api/jobs/:id - Update a job
+app.patch('/api/jobs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    // Build dynamic update query
+    const allowedFields = [
+      'status', 'tech_notes', 'work_performed', 'recommendations',
+      'parts_used', 'labor_hours', 'tech_signature', 'photos',
+      'nameplate_photos', 'started_at', 'completed_at', 'signed_at'
+    ];
+
+    const setClause = [];
+    const values = [];
+
+    Object.keys(updates).forEach(key => {
+      if (allowedFields.includes(key)) {
+        setClause.push(`${key} = $${values.length + 1}`);
+        values.push(updates[key]);
+      }
+    });
+
+    if (setClause.length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    values.push(id); // For WHERE clause
+
+    const job = await sql.unsafe(`
+      UPDATE jobs
+      SET ${setClause.join(', ')}, updated_at = NOW()
+      WHERE id = $${values.length}
+      RETURNING *
+    `, values);
+
+    if (job.length === 0) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    res.json({
+      success: true,
+      job: job[0]
+    });
+
+  } catch (error) {
+    console.error('Error updating job:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/job-types - List available job types and their codes
+app.get('/api/job-types', async (req, res) => {
+  try {
+    const jobTypes = [
+      { value: 'repair', code: 'RP', label: 'Repair', description: 'Standard repair work' },
+      { value: 'quoted_repair', code: 'QR', label: 'Quoted Repair', description: 'Repair requiring quote approval' },
+      { value: 'service', code: 'SC', label: 'Service Call', description: 'General service call' },
+      { value: 'service_call', code: 'SC', label: 'Service Call', description: 'General service call' },
+      { value: 'pm', code: 'PM', label: 'Preventive Maintenance', description: 'Scheduled maintenance' },
+      { value: 'preventive_maintenance', code: 'PM', label: 'Preventive Maintenance', description: 'Scheduled maintenance' }
+    ];
+
+    res.json({
+      success: true,
+      jobTypes: jobTypes
+    });
+
+  } catch (error) {
+    console.error('Error fetching job types:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/locations - List available location codes
+app.get('/api/locations', async (req, res) => {
+  try {
+    const locations = await sql`
+      SELECT code, name, is_default
+      FROM location_codes
+      ORDER BY is_default DESC, name ASC
+    `;
+
+    res.json({
+      success: true,
+      locations: locations
+    });
+
+  } catch (error) {
+    console.error('Error fetching locations:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/locations - Add a new location code
+app.post('/api/locations', async (req, res) => {
+  try {
+    const { code, name, is_default } = req.body;
+
+    if (!code || !name) {
+      return res.status(400).json({ error: 'code and name are required' });
+    }
+
+    // If setting as default, unset other defaults first
+    if (is_default) {
+      await sql`
+        UPDATE location_codes
+        SET is_default = false
+        WHERE is_default = true
+      `;
+    }
+
+    const location = await sql`
+      INSERT INTO location_codes (code, name, is_default)
+      VALUES (${code.toUpperCase()}, ${name}, ${is_default || false})
+      RETURNING *
+    `;
+
+    res.json({
+      success: true,
+      location: location[0]
+    });
+
+  } catch (error) {
+    console.error('Error creating location:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/job-counter - Get current job counter status
+app.get('/api/job-counter', async (req, res) => {
+  try {
+    const status = await sql`
+      SELECT * FROM job_counter_status
+    `;
+
+    res.json({
+      success: true,
+      counter: status[0]
+    });
+
+  } catch (error) {
+    console.error('Error fetching job counter:', error);
     res.status(500).json({ error: error.message });
   }
 });
