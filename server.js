@@ -1710,34 +1710,88 @@ function extractQuantityAndTerm(partString) {
 // In-memory storage for submitted repairs
 let submittedRepairs = [];
 
-app.post('/api/submit-repairs', (req, res) => {
+// POST /api/submit-repairs - Create job records from parsed repairs
+app.post('/api/submit-repairs', async (req, res) => {
   try {
-    const { repairs } = req.body;
+    const { repairs, customer_id } = req.body;
 
     if (!repairs || !Array.isArray(repairs)) {
       return res.status(400).json({ error: 'Invalid repairs data' });
     }
 
-    // Store repairs with timestamp
-    const submission = {
-      id: Date.now(),
-      timestamp: new Date().toISOString(),
-      repairs: repairs,
-      count: repairs.length
-    };
+    // Default to customer_id 1 (Planet Fitness) if not provided
+    // TODO: In future, pass customer_id from frontend equipment selector
+    const defaultCustomerId = customer_id || 1;
 
-    submittedRepairs.push(submission);
+    const createdJobs = [];
 
-    console.log(`\n=== REPAIR SUBMISSION ===`);
-    console.log(`Time: ${submission.timestamp}`);
-    console.log(`Total Repairs: ${submission.count}`);
-    console.log(JSON.stringify(repairs, null, 2));
+    console.log(`\n=== CREATING JOBS FROM REPAIRS ===`);
+    console.log(`Customer ID: ${defaultCustomerId}`);
+    console.log(`Total Repairs: ${repairs.length}`);
+
+    // Create a job for each repair
+    for (const repair of repairs) {
+      try {
+        // Determine job type based on repair context
+        // Default to 'repair' but could be 'service' for basic calls
+        const jobType = repair.actions && repair.actions.length > 0 ? 'repair' : 'service';
+
+        // Format parts for database (ensure proper structure)
+        const partsUsed = (repair.parts || []).map(part => ({
+          name: part.name || part,
+          quantity: part.quantity || 1,
+          unit: part.unit || null,
+          category: part.category || null,
+          matched: part.matched || false,
+          match_confidence: part.match_confidence || null
+        }));
+
+        // Create job record
+        const job = await sql`
+          INSERT INTO jobs (
+            customer_id,
+            equipment_id,
+            job_type,
+            status,
+            problem_description,
+            tech_notes,
+            parts_used,
+            location_code
+          ) VALUES (
+            ${defaultCustomerId},
+            ${null},
+            ${jobType},
+            ${'completed'},
+            ${repair.problem || 'Service call'},
+            ${repair.notes || repair.raw_transcription || ''},
+            ${JSON.stringify(partsUsed)},
+            ${'N'}
+          )
+          RETURNING *
+        `;
+
+        createdJobs.push(job[0]);
+
+        console.log(`✓ Created job ${job[0].job_number} for equipment: ${repair.equipment || 'Unknown'}`);
+        console.log(`  Parts: ${partsUsed.map(p => `${p.quantity} ${p.name}`).join(', ')}`);
+
+      } catch (repairError) {
+        console.error(`Error creating job for repair:`, repairError);
+        // Continue with other repairs even if one fails
+      }
+    }
+
     console.log(`========================\n`);
 
     res.json({
       success: true,
-      submissionId: submission.id,
-      message: `Successfully submitted ${repairs.length} repair(s)`
+      jobsCreated: createdJobs.length,
+      jobs: createdJobs.map(j => ({
+        job_number: j.job_number,
+        job_type: j.job_type,
+        parts_count: JSON.parse(j.parts_used || '[]').length
+      })),
+      message: `Successfully created ${createdJobs.length} job(s)`
     });
 
   } catch (error) {
