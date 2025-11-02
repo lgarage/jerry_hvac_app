@@ -1,8 +1,8 @@
 # Jerry HVAC - Session Progress Tracker
 
-**Last Updated:** November 2, 2025 (8:30am Sunday)
+**Last Updated:** November 2, 2025 (Session continued)
 **Current Phase:** Phase 1 MVP (50% complete - 3/6 items)
-**Session Focus:** Wired parts parsing to jobs database
+**Session Focus:** Wired parts parsing to jobs database + added progress tracking
 
 ---
 
@@ -12,6 +12,8 @@
 - ✅ **Wired parts to jobs** - `/api/submit-repairs` now creates job records with `parts_used` JSONB
 - ✅ **Job number format** - Changed to 0001NRP (sequential + location + type)
 - ✅ **CSV import fixes** - Fixed PostgreSQL type inference errors, added drag-and-drop
+- ✅ **Progress tracking** - Added auto-update instructions to CLAUDE.md (lines 203-259)
+- ✅ **Documentation cleanup** - Deleted PROJECT_STATUS.md to avoid duplication
 
 ### Ready to Test
 - [ ] Voice record: "RTU-1 needs 2 filters and 4 pounds R-410A"
@@ -109,7 +111,7 @@
 
 ---
 
-## 📝 Last Session Notes (Nov 2, 8am)
+## 📝 Last Session Notes (Nov 2, 8am - continued)
 
 **Completed:**
 - Modified `/api/submit-repairs` endpoint (server.js lines 1713-1801)
@@ -118,6 +120,8 @@
 - Job type determined by repair.actions (repair vs service)
 - Status set to 'completed' (repairs already done when submitted)
 - Defaults to customer_id=1 (Planet Fitness)
+- Added progress tracking section to CLAUDE.md (lines 203-259)
+- Deleted PROJECT_STATUS.md to keep PROGRESS.md as single source of truth
 
 **Code Changes:**
 ```javascript
@@ -133,6 +137,10 @@ const partsUsed = repair.parts.map(part => ({
 const job = await sql`INSERT INTO jobs (...) VALUES (...)`;
 // Returns: {job_number: "0001NRP", parts_used: [...]}
 ```
+
+**Documentation Changes:**
+- CLAUDE.md now includes auto-reminder to update PROGRESS.md at session end
+- Ensures context is maintained across sessions without needing to ask "what should I work on?"
 
 **Testing TODO:**
 1. Restart server: `npm start`
@@ -186,8 +194,8 @@ Voice-first HVAC field service documentation. Techs speak repairs, AI extracts p
 
 **Planning Guides:**
 - `.claude/skills/jerry-hvac-roadmap.md` ← Static roadmap (what to build)
-- `PROGRESS.md` ← This file (where you are now)
-- `PROJECT_STATUS.md` ← Comprehensive status (for long breaks)
+- `PROGRESS.md` ← This file (where you are now) - single source of truth
+- `CLAUDE.md` ← Auto-loaded parsing rules + progress tracking instructions
 - `PHASE1_SETUP.md` ← Setup & API reference
 
 **Code Files:**
@@ -224,4 +232,4 @@ Voice-first HVAC field service documentation. Techs speak repairs, AI extracts p
 
 ---
 
-**Remember:** This is your quick-reference sheet. For deep context, read PROJECT_STATUS.md. For planning, invoke the roadmap skill. 🚀
+**Remember:** This is your quick-reference sheet. CLAUDE.md auto-loads every session with parsing rules and progress reminders. For planning, invoke the roadmap skill. 🚀
