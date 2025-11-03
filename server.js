@@ -1808,6 +1808,248 @@ app.get('/api/submissions', (req, res) => {
   });
 });
 
+// ============================================================================
+// TRANSCRIPT API ENDPOINTS
+// ============================================================================
+
+/**
+ * POST /api/jobs/:jobNumber/transcripts
+ * Add a transcript to an existing job
+ *
+ * Request body:
+ * {
+ *   "text": "RTU-6 needs 2 filters and 4 AA batteries",
+ *   "unitsMentioned": ["RTU-6"],
+ *   "sessionId": "session-abc-123",
+ *   "wasFollowUp": false
+ * }
+ */
+app.post('/api/jobs/:jobNumber/transcripts', async (req, res) => {
+  try {
+    const { jobNumber } = req.params;
+    const { text, unitsMentioned = [], sessionId, wasFollowUp = false } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: 'Transcript text is required' });
+    }
+
+    console.log(`\n=== ADDING TRANSCRIPT TO JOB ${jobNumber} ===`);
+    console.log(`Text: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
+    console.log(`Units: ${unitsMentioned.join(', ') || 'none'}`);
+
+    // Use database function to add transcript
+    const result = await sql`
+      SELECT add_transcript_to_job(
+        ${jobNumber},
+        ${text},
+        ${unitsMentioned},
+        ${sessionId || null},
+        ${wasFollowUp}
+      ) as transcript
+    `;
+
+    const transcript = result[0].transcript;
+    console.log(`✓ Transcript added with ID: ${transcript.id}`);
+
+    // Update session context if units were mentioned
+    if (unitsMentioned.length > 0) {
+      await sql`
+        SELECT update_session_context(
+          ${jobNumber},
+          ${sessionId || transcript.context.sessionId},
+          ${unitsMentioned[unitsMentioned.length - 1]},
+          ${unitsMentioned}
+        )
+      `;
+      console.log(`✓ Session context updated`);
+    }
+
+    console.log(`========================\n`);
+
+    res.json({
+      success: true,
+      transcript: transcript
+    });
+
+  } catch (error) {
+    console.error('Error adding transcript:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/jobs/:jobNumber/transcripts
+ * Get all transcripts for a job
+ *
+ * Query params:
+ *   ?sort=ASC|DESC (default DESC - newest first)
+ */
+app.get('/api/jobs/:jobNumber/transcripts', async (req, res) => {
+  try {
+    const { jobNumber } = req.params;
+    const sortOrder = req.query.sort?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    console.log(`\n=== FETCHING TRANSCRIPTS FOR JOB ${jobNumber} ===`);
+
+    const transcripts = await sql`
+      SELECT * FROM get_job_transcripts(${jobNumber}, ${sortOrder})
+    `;
+
+    console.log(`✓ Found ${transcripts.length} transcript(s)`);
+    console.log(`========================\n`);
+
+    res.json({
+      success: true,
+      jobNumber: jobNumber,
+      count: transcripts.length,
+      transcripts: transcripts
+    });
+
+  } catch (error) {
+    console.error('Error fetching transcripts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/jobs/:jobNumber/transcripts/unit/:unitName
+ * Get transcripts filtered by unit name
+ *
+ * Example: /api/jobs/0001NRP/transcripts/unit/RTU-6
+ */
+app.get('/api/jobs/:jobNumber/transcripts/unit/:unitName', async (req, res) => {
+  try {
+    const { jobNumber, unitName } = req.params;
+
+    console.log(`\n=== FETCHING TRANSCRIPTS FOR ${unitName} IN JOB ${jobNumber} ===`);
+
+    const transcripts = await sql`
+      SELECT * FROM get_unit_transcripts(${jobNumber}, ${unitName})
+    `;
+
+    console.log(`✓ Found ${transcripts.length} transcript(s) for ${unitName}`);
+    console.log(`========================\n`);
+
+    res.json({
+      success: true,
+      jobNumber: jobNumber,
+      unit: unitName,
+      count: transcripts.length,
+      transcripts: transcripts
+    });
+
+  } catch (error) {
+    console.error('Error fetching unit transcripts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/jobs/:jobNumber/units
+ * Get all units mentioned in a job with statistics
+ */
+app.get('/api/jobs/:jobNumber/units', async (req, res) => {
+  try {
+    const { jobNumber } = req.params;
+
+    console.log(`\n=== FETCHING UNITS FOR JOB ${jobNumber} ===`);
+
+    const units = await sql`
+      SELECT * FROM get_job_units(${jobNumber})
+    `;
+
+    console.log(`✓ Found ${units.length} unit(s)`);
+    units.forEach(u => {
+      console.log(`  - ${u.unit_name} (mentioned ${u.mention_count}x)`);
+    });
+    console.log(`========================\n`);
+
+    res.json({
+      success: true,
+      jobNumber: jobNumber,
+      count: units.length,
+      units: units
+    });
+
+  } catch (error) {
+    console.error('Error fetching job units:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/jobs/:jobNumber/session-context
+ * Get current session context (last mentioned unit, active units)
+ */
+app.get('/api/jobs/:jobNumber/session-context', async (req, res) => {
+  try {
+    const { jobNumber } = req.params;
+
+    const job = await sql`
+      SELECT session_context
+      FROM jobs
+      WHERE job_number = ${jobNumber}
+    `;
+
+    if (job.length === 0) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    res.json({
+      success: true,
+      jobNumber: jobNumber,
+      sessionContext: job[0].session_context || {}
+    });
+
+  } catch (error) {
+    console.error('Error fetching session context:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * PUT /api/jobs/:jobNumber/session-context
+ * Update session context
+ *
+ * Request body:
+ * {
+ *   "sessionId": "session-abc-123",
+ *   "lastMentionedUnit": "RTU-6",
+ *   "activeUnits": ["RTU-6", "RTU-2"]
+ * }
+ */
+app.put('/api/jobs/:jobNumber/session-context', async (req, res) => {
+  try {
+    const { jobNumber } = req.params;
+    const { sessionId, lastMentionedUnit, activeUnits = [] } = req.body;
+
+    console.log(`\n=== UPDATING SESSION CONTEXT FOR JOB ${jobNumber} ===`);
+    console.log(`Last mentioned unit: ${lastMentionedUnit || 'none'}`);
+    console.log(`Active units: ${activeUnits.join(', ') || 'none'}`);
+
+    await sql`
+      SELECT update_session_context(
+        ${jobNumber},
+        ${sessionId},
+        ${lastMentionedUnit || null},
+        ${activeUnits}
+      )
+    `;
+
+    console.log(`✓ Session context updated`);
+    console.log(`========================\n`);
+
+    res.json({
+      success: true,
+      message: 'Session context updated'
+    });
+
+  } catch (error) {
+    console.error('Error updating session context:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Parts Search Endpoints
 app.get('/api/parts/search', async (req, res) => {
   try {
