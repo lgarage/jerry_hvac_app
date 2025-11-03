@@ -1,0 +1,523 @@
+{
+  "filters": [
+    {
+      "size": "12x12x1",
+      "width": 12,
+      "height": 12,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.10 },
+        "tier2": { "qty": 36, "price": 7.80 },
+        "tier3": { "qty": 60, "price": 7.50 }
+      },
+      "commonNames": ["12x12x1", "12 by 12 by 1", "12×12×1"]
+    },
+    {
+      "size": "12x24x1",
+      "width": 12,
+      "height": 24,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.30 },
+        "tier2": { "qty": 36, "price": 8.00 },
+        "tier3": { "qty": 60, "price": 7.70 }
+      },
+      "commonNames": ["12x24x1", "12 by 24 by 1", "12×24×1"]
+    },
+    {
+      "size": "14x20x1",
+      "width": 14,
+      "height": 20,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 6.50 },
+        "tier2": { "qty": 36, "price": 6.20 },
+        "tier3": { "qty": 60, "price": 5.90 }
+      },
+      "commonNames": ["14x20x1", "14 by 20 by 1", "14×20×1"],
+      "popular": true
+    },
+    {
+      "size": "14x25x1",
+      "width": 14,
+      "height": 25,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 7.15 },
+        "tier2": { "qty": 36, "price": 6.85 },
+        "tier3": { "qty": 60, "price": 6.55 }
+      },
+      "commonNames": ["14x25x1", "14 by 25 by 1", "14×25×1"]
+    },
+    {
+      "size": "16x16x1",
+      "width": 16,
+      "height": 16,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 7.65 },
+        "tier2": { "qty": 36, "price": 7.35 },
+        "tier3": { "qty": 60, "price": 7.05 }
+      },
+      "commonNames": ["16x16x1", "16 by 16 by 1", "16×16×1"]
+    },
+    {
+      "size": "16x20x1",
+      "width": 16,
+      "height": 20,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 6.20 },
+        "tier2": { "qty": 36, "price": 5.90 },
+        "tier3": { "qty": 60, "price": 5.60 }
+      },
+      "commonNames": ["16x20x1", "16 by 20 by 1", "16×20×1"],
+      "popular": true
+    },
+    {
+      "size": "16x25x1",
+      "width": 16,
+      "height": 25,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 6.70 },
+        "tier2": { "qty": 36, "price": 6.40 },
+        "tier3": { "qty": 60, "price": 6.15 }
+      },
+      "commonNames": ["16x25x1", "16 by 25 by 1", "16×25×1"],
+      "popular": true
+    },
+    {
+      "size": "18x18x1",
+      "width": 18,
+      "height": 18,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.40 },
+        "tier2": { "qty": 36, "price": 8.10 },
+        "tier3": { "qty": 60, "price": 7.80 }
+      },
+      "commonNames": ["18x18x1", "18 by 18 by 1", "18×18×1"]
+    },
+    {
+      "size": "18x20x1",
+      "width": 18,
+      "height": 20,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.50 },
+        "tier2": { "qty": 36, "price": 8.20 },
+        "tier3": { "qty": 60, "price": 7.90 }
+      },
+      "commonNames": ["18x20x1", "18 by 20 by 1", "18×20×1"]
+    },
+    {
+      "size": "18x24x1",
+      "width": 18,
+      "height": 24,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.60 },
+        "tier2": { "qty": 36, "price": 8.30 },
+        "tier3": { "qty": 60, "price": 8.00 }
+      },
+      "commonNames": ["18x24x1", "18 by 24 by 1", "18×24×1"]
+    },
+    {
+      "size": "20x20x1",
+      "width": 20,
+      "height": 20,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 6.70 },
+        "tier2": { "qty": 36, "price": 6.40 },
+        "tier3": { "qty": 60, "price": 6.15 }
+      },
+      "commonNames": ["20x20x1", "20 by 20 by 1", "20×20×1"],
+      "popular": true
+    },
+    {
+      "size": "20x22x1",
+      "width": 20,
+      "height": 22,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.80 },
+        "tier2": { "qty": 36, "price": 8.50 },
+        "tier3": { "qty": 60, "price": 8.20 }
+      },
+      "commonNames": ["20x22x1", "20 by 22 by 1", "20×22×1"]
+    },
+    {
+      "size": "20x24x1",
+      "width": 20,
+      "height": 24,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.80 },
+        "tier2": { "qty": 36, "price": 8.50 },
+        "tier3": { "qty": 60, "price": 8.20 }
+      },
+      "commonNames": ["20x24x1", "20 by 24 by 1", "20×24×1"]
+    },
+    {
+      "size": "20x25x1",
+      "width": 20,
+      "height": 25,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 7.50 },
+        "tier2": { "qty": 36, "price": 7.25 },
+        "tier3": { "qty": 60, "price": 6.95 }
+      },
+      "commonNames": ["20x25x1", "20 by 25 by 1", "20×25×1"],
+      "popular": true
+    },
+    {
+      "size": "20x30x1",
+      "width": 20,
+      "height": 30,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 12.20 },
+        "tier2": { "qty": 36, "price": 11.80 },
+        "tier3": { "qty": 60, "price": 11.40 }
+      },
+      "commonNames": ["20x30x1", "20 by 30 by 1", "20×30×1"]
+    },
+    {
+      "size": "24x24x1",
+      "width": 24,
+      "height": 24,
+      "depth": 1,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 7.90 },
+        "tier2": { "qty": 36, "price": 7.60 },
+        "tier3": { "qty": 60, "price": 7.30 }
+      },
+      "commonNames": ["24x24x1", "24 by 24 by 1", "24×24×1"],
+      "popular": true
+    },
+    {
+      "size": "12x24x2",
+      "width": 12,
+      "height": 24,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 7.10 },
+        "tier2": { "qty": 36, "price": 6.75 },
+        "tier3": { "qty": 60, "price": 6.50 }
+      },
+      "commonNames": ["12x24x2", "12 by 24 by 2", "12×24×2"]
+    },
+    {
+      "size": "14x20x2",
+      "width": 14,
+      "height": 20,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.50 },
+        "tier2": { "qty": 36, "price": 8.25 },
+        "tier3": { "qty": 60, "price": 8.00 }
+      },
+      "commonNames": ["14x20x2", "14 by 20 by 2", "14×20×2"]
+    },
+    {
+      "size": "16x16x2",
+      "width": 16,
+      "height": 16,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 9.05 },
+        "tier2": { "qty": 36, "price": 8.75 },
+        "tier3": { "qty": 60, "price": 8.50 }
+      },
+      "commonNames": ["16x16x2", "16 by 16 by 2", "16×16×2"]
+    },
+    {
+      "size": "16x20x2",
+      "width": 16,
+      "height": 20,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 6.75 },
+        "tier2": { "qty": 36, "price": 6.50 },
+        "tier3": { "qty": 60, "price": 6.20 }
+      },
+      "commonNames": ["16x20x2", "16 by 20 by 2", "16×20×2"],
+      "popular": true
+    },
+    {
+      "size": "16x24x2",
+      "width": 16,
+      "height": 24,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.60 },
+        "tier2": { "qty": 36, "price": 8.20 },
+        "tier3": { "qty": 60, "price": 8.00 }
+      },
+      "commonNames": ["16x24x2", "16 by 24 by 2", "16×24×2"]
+    },
+    {
+      "size": "16x25x2",
+      "width": 16,
+      "height": 25,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 7.75 },
+        "tier2": { "qty": 36, "price": 7.40 },
+        "tier3": { "qty": 60, "price": 7.15 }
+      },
+      "commonNames": ["16x25x2", "16 by 25 by 2", "16×25×2"]
+    },
+    {
+      "size": "18x18x2",
+      "width": 18,
+      "height": 18,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 10.70 },
+        "tier2": { "qty": 36, "price": 10.40 },
+        "tier3": { "qty": 60, "price": 10.10 }
+      },
+      "commonNames": ["18x18x2", "18 by 18 by 2", "18×18×2"]
+    },
+    {
+      "size": "18x24x2",
+      "width": 18,
+      "height": 24,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.10 },
+        "tier2": { "qty": 36, "price": 7.80 },
+        "tier3": { "qty": 60, "price": 7.50 }
+      },
+      "commonNames": ["18x24x2", "18 by 24 by 2", "18×24×2"]
+    },
+    {
+      "size": "20x20x2",
+      "width": 20,
+      "height": 20,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 7.40 },
+        "tier2": { "qty": 36, "price": 7.15 },
+        "tier3": { "qty": 60, "price": 6.85 }
+      },
+      "commonNames": ["20x20x2", "20 by 20 by 2", "20×20×2"],
+      "popular": true
+    },
+    {
+      "size": "20x24x2",
+      "width": 20,
+      "height": 24,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.35 },
+        "tier2": { "qty": 36, "price": 8.05 },
+        "tier3": { "qty": 60, "price": 7.75 }
+      },
+      "commonNames": ["20x24x2", "20 by 24 by 2", "20×24×2"]
+    },
+    {
+      "size": "20x25x2",
+      "width": 20,
+      "height": 25,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 8.50 },
+        "tier2": { "qty": 36, "price": 8.20 },
+        "tier3": { "qty": 60, "price": 7.90 }
+      },
+      "commonNames": ["20x25x2", "20 by 25 by 2", "20×25×2"]
+    },
+    {
+      "size": "20x30x2",
+      "width": 20,
+      "height": 30,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 6,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 14.50 },
+        "tier2": { "qty": 36, "price": 14.00 },
+        "tier3": { "qty": 60, "price": 13.50 }
+      },
+      "commonNames": ["20x30x2", "20 by 30 by 2", "20×30×2"]
+    },
+    {
+      "size": "24x24x2",
+      "width": 24,
+      "height": 24,
+      "depth": 2,
+      "merv": 8,
+      "qtyPerCase": 12,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 9.35 },
+        "tier2": { "qty": 36, "price": 9.05 },
+        "tier3": { "qty": 60, "price": 8.75 }
+      },
+      "commonNames": ["24x24x2", "24 by 24 by 2", "24×24×2"],
+      "popular": true
+    },
+    {
+      "size": "12x24x4",
+      "width": 12,
+      "height": 24,
+      "depth": 4,
+      "merv": 8,
+      "qtyPerCase": 6,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 15.00 },
+        "tier2": { "qty": 36, "price": 14.50 },
+        "tier3": { "qty": 60, "price": 14.00 }
+      },
+      "commonNames": ["12x24x4", "12 by 24 by 4", "12×24×4"]
+    },
+    {
+      "size": "16x20x4",
+      "width": 16,
+      "height": 20,
+      "depth": 4,
+      "merv": 8,
+      "qtyPerCase": 6,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 15.25 },
+        "tier2": { "qty": 36, "price": 14.75 },
+        "tier3": { "qty": 60, "price": 14.25 }
+      },
+      "commonNames": ["16x20x4", "16 by 20 by 4", "16×20×4"]
+    },
+    {
+      "size": "16x25x4",
+      "width": 16,
+      "height": 25,
+      "depth": 4,
+      "merv": 8,
+      "qtyPerCase": 6,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 16.00 },
+        "tier2": { "qty": 36, "price": 15.50 },
+        "tier3": { "qty": 60, "price": 15.00 }
+      },
+      "commonNames": ["16x25x4", "16 by 25 by 4", "16×25×4"]
+    },
+    {
+      "size": "20x20x4",
+      "width": 20,
+      "height": 20,
+      "depth": 4,
+      "merv": 8,
+      "qtyPerCase": 6,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 15.75 },
+        "tier2": { "qty": 36, "price": 15.25 },
+        "tier3": { "qty": 60, "price": 14.75 }
+      },
+      "commonNames": ["20x20x4", "20 by 20 by 4", "20×20×4"]
+    },
+    {
+      "size": "20x24x4",
+      "width": 20,
+      "height": 24,
+      "depth": 4,
+      "merv": 8,
+      "qtyPerCase": 6,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 16.00 },
+        "tier2": { "qty": 36, "price": 15.50 },
+        "tier3": { "qty": 60, "price": 15.00 }
+      },
+      "commonNames": ["20x24x4", "20 by 24 by 4", "20×24×4"]
+    },
+    {
+      "size": "20x25x4",
+      "width": 20,
+      "height": 25,
+      "depth": 4,
+      "merv": 8,
+      "qtyPerCase": 6,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 16.25 },
+        "tier2": { "qty": 36, "price": 15.75 },
+        "tier3": { "qty": 60, "price": 15.25 }
+      },
+      "commonNames": ["20x25x4", "20 by 25 by 4", "20×25×4"]
+    },
+    {
+      "size": "24x24x4",
+      "width": 24,
+      "height": 24,
+      "depth": 4,
+      "merv": 8,
+      "qtyPerCase": 6,
+      "pricing": {
+        "tier1": { "qty": 12, "price": 17.50 },
+        "tier2": { "qty": 36, "price": 17.00 },
+        "tier3": { "qty": 60, "price": 16.50 }
+      },
+      "commonNames": ["24x24x4", "24 by 24 by 4", "24×24×4"]
+    }
+  ],
+  "metadata": {
+    "lastUpdated": "2025-11-03",
+    "totalSizes": 36,
+    "popularSizes": ["14x20x1", "16x20x1", "16x25x1", "20x20x1", "20x25x1", "24x24x1", "16x20x2", "20x20x2", "24x24x2"],
+    "notes": "All filters are MERV 8 rating. Pricing tiers: 12 qty, 36 qty, 60+ qty"
+  }
+}

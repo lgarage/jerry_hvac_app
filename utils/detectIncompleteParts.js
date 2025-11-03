@@ -5,6 +5,8 @@
  * that these are incomplete (missing size and type) and prompt for details.
  */
 
+const { getPopularFilterSizes, validateFilterSize } = require('./filterSizeLookup');
+
 /**
  * Check if a part string has complete specifications
  */
@@ -83,25 +85,51 @@ function detectFilter(normalized, original) {
     const match = original.match(sizePattern);
     const size = `${match[1]}x${match[3]}x${match[5]}`;
 
-    return {
-      isComplete: true,
-      category: 'filter',
-      size: size,
-      missingDetails: [],
-      prompt: null,
-      confidence: 0.95,
-      originalText: original
-    };
+    // Validate against inventory
+    const validFilter = validateFilterSize(size);
+
+    if (validFilter) {
+      // Filter exists in inventory
+      return {
+        isComplete: true,
+        category: 'filter',
+        size: size,
+        validatedSize: validFilter.size,
+        inStock: true,
+        pricing: validFilter.pricing,
+        merv: validFilter.merv,
+        missingDetails: [],
+        prompt: null,
+        confidence: 0.95,
+        originalText: original
+      };
+    } else {
+      // Filter size mentioned but not in inventory
+      return {
+        isComplete: true,
+        category: 'filter',
+        size: size,
+        inStock: false,
+        warning: `${size} not found in standard inventory. Verify this size exists.`,
+        missingDetails: [],
+        prompt: null,
+        confidence: 0.7,
+        originalText: original
+      };
+    }
   }
+
+  // No size specified - suggest popular sizes from inventory
+  const popularSizes = getPopularFilterSizes();
 
   return {
     isComplete: false,
     category: 'filter',
     missingDetails: ['size'],
-    prompt: 'What size filter? (e.g., 20x25x1, 16x20x2, 24x24x2)',
+    prompt: 'What size filter? (e.g., ' + popularSizes.slice(0, 3).join(', ') + ')',
     confidence: 0.9,
     originalText: original,
-    suggestions: ['20x25x1', '16x20x2', '24x24x2', '16x25x1']
+    suggestions: popularSizes
   };
 }
 
