@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 const { sql } = require('./db');
+const { detectIncompletePartsBatch, getClarificationQuestions, hasIncompleteParts } = require('./utils/detectIncompleteParts');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1502,7 +1503,45 @@ Return ONLY valid JSON array, no additional text.`;
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
-    return Array.isArray(parsed) ? parsed : [parsed];
+    const repairs = Array.isArray(parsed) ? parsed : [parsed];
+
+    // Check each repair for incomplete parts
+    console.log('\n🔍 Checking for incomplete part specifications...');
+
+    for (const repair of repairs) {
+      if (!repair.parts || repair.parts.length === 0) {
+        repair.needsClarification = false;
+        repair.incompleteParts = [];
+        continue;
+      }
+
+      // Detect incomplete parts
+      const partDetections = detectIncompletePartsBatch(repair.parts);
+
+      // Filter to only incomplete parts
+      const incompleteParts = partDetections.filter(detection => !detection.isComplete);
+
+      if (incompleteParts.length > 0) {
+        repair.needsClarification = true;
+        repair.incompleteParts = incompleteParts;
+
+        // Get clarification questions
+        const questions = getClarificationQuestions(partDetections);
+        repair.clarificationQuestions = questions;
+
+        console.log(`⚠️  ${repair.equipment || 'Equipment'} has ${incompleteParts.length} incomplete part(s):`);
+        incompleteParts.forEach(part => {
+          console.log(`   - ${part.originalText} (missing: ${part.missingDetails.join(', ')})`);
+          console.log(`     → ${part.prompt}`);
+        });
+      } else {
+        repair.needsClarification = false;
+        repair.incompleteParts = [];
+        console.log(`✓ ${repair.equipment || 'Equipment'} - all parts complete`);
+      }
+    }
+
+    return repairs;
 
   } catch (error) {
     console.error('Parsing error:', error);
