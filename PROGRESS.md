@@ -16,6 +16,7 @@
 - ✅ **Database functions** - 5 PostgreSQL functions for transcript management
 - ✅ **Incomplete part detection** - detectIncompleteParts.js detects missing specs (24/24 tests passing)
 - ✅ **Parser integration** - parseRepairs() now flags incomplete parts with prompts
+- ✅ **Filter inventory system** - 36 filter sizes with pricing, validation, smart suggestions
 
 ### Previous Session (Nov 2)
 - ✅ **Wired parts to jobs** - `/api/submit-repairs` now creates job records with `parts_used` JSONB
@@ -175,6 +176,21 @@
    - Returns structured data with missing details and prompts
    - Test suite: 24/24 tests passing ✅
    - Integrated into parseRepairs() (server.js:1508-1544)
+
+5. **Filter Inventory System (data/filter-sizes.json + utils/filterSizeLookup.js)**
+   - Database of 36 common filter sizes with complete specifications
+   - 3 pricing tiers based on quantity (12, 36, 60+ qty)
+   - 9 popular sizes flagged for smart suggestions
+   - Functions:
+     * `getPopularFilterSizes()` - suggests most common sizes
+     * `validateFilterSize()` - checks if size exists in inventory
+     * `getFilterPricing()` - calculates price with tier discounts
+     * `normalizeFilterSize()` - converts spoken "20 by 25 by 1" to "20x25x1"
+   - Integrated with incomplete detection:
+     * "filters" → suggests "14x20x1, 16x20x1, 16x25x1"
+     * "24x24x2 filters" → validates, shows $9.35/ea pricing
+     * "30x30x1 filters" → warns "not in standard inventory"
+   - Test suite: All validations passing ✅
 
 **Next Steps (Phase 2 - Frontend Integration):**
 1. Wire transcript API to voice recording flow
