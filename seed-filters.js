@@ -28,7 +28,8 @@ async function seedFilters() {
       process.exit(1);
     }
 
-    const filterData = JSON.parse(fs.readFileSync(filterDataPath, 'utf8'));
+    const filterDataRaw = JSON.parse(fs.readFileSync(filterDataPath, 'utf8'));
+    const filterData = filterDataRaw.filters || filterDataRaw; // Handle both {filters: [...]} and [...] formats
     console.log(`📦 Loaded ${filterData.length} filter sizes from JSON\n`);
 
     // Check if parts table exists
