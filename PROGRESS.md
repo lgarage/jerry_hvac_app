@@ -18,6 +18,9 @@
 - ✅ **Parser integration** - parseRepairs() now flags incomplete parts with prompts
 - ✅ **Filter inventory system** - 36 filter sizes with pricing, validation, smart suggestions
 - ✅ **Equipment-specific learning** - System learns each unit's specs, no generic suggestions
+- ✅ **Equipment metadata integration** - parseRepairs() now queries and uses equipment metadata (server.js:1645-1657)
+- ✅ **Clarification endpoint** - POST /api/jobs/:jobNumber/clarification stores learned specs (server.js:2234-2321)
+- ✅ **Equipment learning tests** - Comprehensive test suite with 6 scenarios passing (test-equipment-learning.js)
 
 ### Previous Session (Nov 2)
 - ✅ **Wired parts to jobs** - `/api/submit-repairs` now creates job records with `parts_used` JSONB
@@ -31,13 +34,16 @@
 - ⏳ **UnitCard component** - Group repairs by equipment in single card
 - ⏳ **TranscriptDrawer component** - Show full transcript history with timestamps
 - ⏳ **Session context tracking** - Track "lastMentionedUnit" for follow-up commands
+- ⏳ **Clarification UI** - Frontend flow for incomplete parts (prompt → response → store)
 
 ### Ready to Test
 - [x] Incomplete detection unit tests (24/24 passing ✅)
+- [x] Equipment learning unit tests (6/6 scenarios passing ✅)
 - [ ] Run migration 006 (needs .env with DATABASE_URL)
 - [ ] Voice record incomplete: "RTU-6 needs filters and batteries" → should prompt for size/type
 - [ ] Voice record complete: "RTU-6 needs 24x24x2 filters and AA batteries" → should NOT prompt
 - [ ] Clarification flow: "filters" → "What size?" → "24x24x2" → complete
+- [ ] Equipment learning flow: first time → learns, second time → suggests
 - [ ] Test multi-unit: "RTU-6 and RTU-2 both need filters"
 - [ ] Test follow-up: "oh and add batteries to that" (should apply to last unit)
 
@@ -58,22 +64,33 @@
 
 ## 🚀 Immediate Next Actions
 
-**Option A: OCR Integration (4-6 hours)**
-- Wire camera to OCR endpoint
-- Extract manufacturer/model/serial
-- Auto-populate equipment fields
-- High value, competitive advantage
+**Option A: Clarification UI (2-4 hours)** ⭐ **RECOMMENDED**
+- Build frontend flow for incomplete parts
+- Display equipment-specific prompts from backend
+- Capture technician's response (voice or text)
+- Call POST /api/jobs/:jobNumber/clarification endpoint
+- Show confirmation: "Learned that RTU-6 uses 24x24x2 filters"
+- Complete the equipment learning loop (backend already done)
+- High value: enables the entire learning system
 
 **Option B: Labor Hours UI (4-6 hours)**
 - Add hours input field
 - Add signature capture (text input)
 - Quick to build, required for billing
 
-**Option C: Keep Testing (30 min)**
-- Test parts-to-jobs flow end-to-end
-- Fix any bugs before moving on
+**Option C: OCR Integration (4-6 hours)**
+- Wire camera to OCR endpoint
+- Extract manufacturer/model/serial
+- Auto-populate equipment fields
+- High value, competitive advantage
 
-**Recommended:** Option C first (test what we built), then Option B (labor hours)
+**Option D: Run Migration 006 & Test (30 min)**
+- Set up .env with DATABASE_URL
+- Run migrations/006_add_transcript_tracking.sql
+- Test transcript endpoints with curl
+- Verify equipment learning with test data
+
+**Recommended:** Option A (clarification UI) - completes the learning system we just built
 
 ---
 
@@ -214,6 +231,35 @@
      * Stores tech's answers in equipment.metadata for next time
      * Each unit builds its own specification profile over time
    - **Documentation:** docs/EQUIPMENT_LEARNING_SYSTEM.md
+
+7. **Equipment Metadata Integration (server.js:1437-1568, 2234-2321)**
+   - **Equipment Query Functions:**
+     * `getEquipmentMetadata(equipmentName)` - query single unit's metadata
+     * `storeEquipmentSpec(equipmentName, specKey, specValue, jobNumber)` - store learned spec
+     * `batchGetEquipmentMetadata(repairs)` - efficiently query multiple units at once
+   - **Integration into parseRepairs():**
+     * Line 1645: Batch query equipment metadata before processing repairs
+     * Line 1657: Populate context with actual metadata from database
+     * Replaced TODO with functional implementation
+   - **Clarification Endpoint (POST /api/jobs/:jobNumber/clarification):**
+     * Receives technician's answer to incomplete part prompt
+     * Validates required fields (equipmentName, specKey, specValue)
+     * Stores learned specification using storeEquipmentSpec()
+     * Re-detects part with updated context to confirm completion
+     * Returns confirmation with updated metadata
+   - **Complete Learning Loop:**
+     1. Tech says "filters" for RTU-6 → "What size filters does RTU-6 need?"
+     2. Tech says "24x24x2" → POST /clarification stores filter_size
+     3. Next visit: "filters" → "RTU-6 uses 24x24x2 filters. Same size?"
+     4. System remembers forever, no manual entry needed
+   - **Test Coverage (test-equipment-learning.js):**
+     * ✅ New equipment (no history) prompts correctly
+     * ✅ Known equipment (has history) suggests learned specs
+     * ✅ Complete specifications validate against inventory
+     * ✅ Size changes trigger learning updates
+     * ✅ Non-standard sizes accepted with warnings
+     * ✅ Batch detection with equipment context works
+     * All 6 scenarios passing
 
 **Next Steps (Phase 2 - Frontend Integration):**
 1. Wire transcript API to voice recording flow
