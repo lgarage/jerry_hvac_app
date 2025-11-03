@@ -5,11 +5,43 @@
 > **Note:** This file is automatically loaded by Claude Code as project-level
 > instructions. Do not move to .claude/skills/ - it must remain in root.
 
+---
+
+## ⚠️ MANDATORY PHASE CHECK - READ THIS FIRST ⚠️
+
+**BEFORE starting ANY work, you MUST check Phase 1 status and get user approval.**
+
+### Phase 1 Checklist (Current Status: 3/6 Complete)
+
+- [x] **1. Auto job numbers** ✅
+- [x] **2. Model/serial storage** ✅
+- [x] **3. Parts parsing to jobs** ✅
+- [ ] **4. OCR nameplate extraction** ⏳ (4-6 hours)
+- [ ] **5. Photo documentation** ⏳ (6-8 hours)
+- [ ] **6. Labor hours + signature** ⏳ (2-4 hours)
+
+### Rules for ALL Work:
+
+1. **Check PROGRESS.md** - Verify current phase status
+2. **Is this request Phase 1 work?**
+   - ✅ YES → Proceed
+   - ❌ NO → Say: *"I'll note that for later, but let's finish Phase 1 first. We're at X/6 items. Which Phase 1 item should we tackle?"*
+3. **Is this a BLOCKER** (prevents Phase 1 work)?
+   - ✅ YES → Fix it quickly, then return to Phase 1
+   - ❌ NO → Defer to after Phase 1 MVP ships
+4. **When in doubt** → Ask user: *"Is this Phase 1 work, or should we finish Phase 1 first?"*
+
+### The Goal: Ship Phase 1 MVP (6/6 items) Before Adding Features
+
+**No exceptions.** Stay disciplined. The user needs a working MVP, not perfect features.
+
+---
+
 ## Project
 
 **Jerry HVAC App – Voice-Driven Part Entry**
 
-This repo powers the “Add Part to Database” modal in the HVAC documentation assistant.  
+This repo powers the "Add Part to Database" modal in the HVAC documentation assistant.
 Treat this as an **active-modal voice UI**: all AI-driven fills or UI updates MUST occur **only** inside the currently open modal.
 
 ---
