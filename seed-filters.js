@@ -109,7 +109,7 @@ async function seedFilters() {
             ${filter.size + ' Air Filter'},
             ${description},
             ${'Filters'},
-            ${'Consumable'},
+            ${'consumable'},
             ${price},
             ${commonUsesArray}
           )
