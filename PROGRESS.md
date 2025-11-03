@@ -14,6 +14,8 @@
 - ✅ **Timestamp utilities** - formatTimestamp.js for relative/absolute time display
 - ✅ **Unit extraction utilities** - extractUnits.js for parsing RTU-6, AHU-2, etc from text
 - ✅ **Database functions** - 5 PostgreSQL functions for transcript management
+- ✅ **Incomplete part detection** - detectIncompleteParts.js detects missing specs (24/24 tests passing)
+- ✅ **Parser integration** - parseRepairs() now flags incomplete parts with prompts
 
 ### Previous Session (Nov 2)
 - ✅ **Wired parts to jobs** - `/api/submit-repairs` now creates job records with `parts_used` JSONB
@@ -29,9 +31,11 @@
 - ⏳ **Session context tracking** - Track "lastMentionedUnit" for follow-up commands
 
 ### Ready to Test
+- [x] Incomplete detection unit tests (24/24 passing ✅)
 - [ ] Run migration 006 (needs .env with DATABASE_URL)
-- [ ] Voice record: "RTU-6 needs 2 filters and 4 AA batteries"
-- [ ] Verify transcript saved with ISO8601 timestamp
+- [ ] Voice record incomplete: "RTU-6 needs filters and batteries" → should prompt for size/type
+- [ ] Voice record complete: "RTU-6 needs 24x24x2 filters and AA batteries" → should NOT prompt
+- [ ] Clarification flow: "filters" → "What size?" → "24x24x2" → complete
 - [ ] Test multi-unit: "RTU-6 and RTU-2 both need filters"
 - [ ] Test follow-up: "oh and add batteries to that" (should apply to last unit)
 
@@ -159,6 +163,18 @@
      * `extractUnits()` - parse "RTU-6", "AHU-2" from text
      * `groupRepairsByUnit()` - consolidate repairs by equipment
      * `normalizeUnitId()` - convert "rtu6" → "RTU-6"
+
+4. **Incomplete Part Detection (utils/detectIncompleteParts.js)**
+   - Detects parts missing required specifications:
+     * Filters → MUST have size (24x24x2, "20 by 25 by 1")
+     * Batteries → MUST have type (AA, AAA, 9V)
+     * Contactors → MUST have poles + voltage (2 pole 24V)
+     * Capacitors → MUST have MFD + voltage (45/5 MFD 440V)
+     * Refrigerant → MUST have type + quantity (4 lbs R-410A)
+     * Belts, Motors, Thermostats → specific requirements
+   - Returns structured data with missing details and prompts
+   - Test suite: 24/24 tests passing ✅
+   - Integrated into parseRepairs() (server.js:1508-1544)
 
 **Next Steps (Phase 2 - Frontend Integration):**
 1. Wire transcript API to voice recording flow
