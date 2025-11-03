@@ -1434,6 +1434,139 @@ async function transcribeAudio(base64Audio) {
   }
 }
 
+// ============================================================================
+// EQUIPMENT METADATA FUNCTIONS
+// ============================================================================
+
+/**
+ * Get equipment metadata for learned specifications
+ * @param {string} equipmentName - Equipment identifier (e.g., "RTU-6")
+ * @returns {Object|null} Equipment metadata or null if not found
+ */
+async function getEquipmentMetadata(equipmentName) {
+  if (!equipmentName) return null;
+
+  try {
+    const result = await sql`
+      SELECT id, equipment_name, metadata
+      FROM equipment
+      WHERE equipment_name = ${equipmentName}
+      LIMIT 1
+    `;
+
+    if (result.length === 0) {
+      console.log(`ℹ️  Equipment ${equipmentName} not found in database`);
+      return null;
+    }
+
+    const equipment = result[0];
+    console.log(`✓ Found equipment ${equipmentName} with metadata`);
+
+    return equipment.metadata || {};
+  } catch (error) {
+    console.error(`Error querying equipment ${equipmentName}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Store learned specification in equipment metadata
+ * @param {string} equipmentName - Equipment identifier
+ * @param {string} specKey - Spec key (e.g., 'filter_size', 'battery_type')
+ * @param {string} specValue - Spec value (e.g., '24x24x2', 'AA')
+ * @param {string} jobNumber - Job number where this was learned (optional)
+ */
+async function storeEquipmentSpec(equipmentName, specKey, specValue, jobNumber = null) {
+  if (!equipmentName || !specKey || !specValue) {
+    console.error('Missing required parameters for storeEquipmentSpec');
+    return false;
+  }
+
+  try {
+    // Check if equipment exists
+    const existing = await sql`
+      SELECT id, metadata
+      FROM equipment
+      WHERE equipment_name = ${equipmentName}
+    `;
+
+    if (existing.length === 0) {
+      console.log(`⚠️  Equipment ${equipmentName} not found - cannot store spec`);
+      return false;
+    }
+
+    const currentMetadata = existing[0].metadata || {};
+
+    // Build updated metadata
+    const updatedMetadata = {
+      ...currentMetadata,
+      [specKey]: specValue,
+      [`${specKey}_learned_date`]: new Date().toISOString(),
+      learned_specifications: {
+        ...(currentMetadata.learned_specifications || {}),
+        [specKey]: {
+          value: specValue,
+          learned_date: new Date().toISOString(),
+          learned_from_job: jobNumber,
+          confidence: 'high'
+        }
+      }
+    };
+
+    // Update equipment metadata
+    await sql`
+      UPDATE equipment
+      SET metadata = ${JSON.stringify(updatedMetadata)},
+          updated_at = NOW()
+      WHERE equipment_name = ${equipmentName}
+    `;
+
+    console.log(`✓ Stored ${specKey} = "${specValue}" for ${equipmentName}`);
+    if (jobNumber) {
+      console.log(`  Learned from job: ${jobNumber}`);
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`Error storing spec for ${equipmentName}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Batch query equipment metadata for multiple repairs
+ * @param {Array} repairs - Array of repair objects with equipment field
+ * @returns {Object} Map of equipmentName -> metadata
+ */
+async function batchGetEquipmentMetadata(repairs) {
+  const equipmentNames = repairs
+    .map(r => r.equipment)
+    .filter(name => name); // Filter out null/undefined
+
+  if (equipmentNames.length === 0) {
+    return {};
+  }
+
+  try {
+    const results = await sql`
+      SELECT equipment_name, metadata
+      FROM equipment
+      WHERE equipment_name = ANY(${equipmentNames})
+    `;
+
+    const metadataMap = {};
+    results.forEach(row => {
+      metadataMap[row.equipment_name] = row.metadata || {};
+    });
+
+    console.log(`✓ Loaded metadata for ${results.length} equipment(s)`);
+    return metadataMap;
+  } catch (error) {
+    console.error('Error batch querying equipment metadata:', error);
+    return {};
+  }
+}
+
 async function parseRepairs(transcription, rawTranscription = null) {
   try {
     const systemPrompt = `You are an HVAC repair documentation assistant. Parse the technician's notes into structured repair items.
@@ -1508,6 +1641,9 @@ Return ONLY valid JSON array, no additional text.`;
     // Check each repair for incomplete parts
     console.log('\n🔍 Checking for incomplete part specifications...');
 
+    // Batch query equipment metadata for all repairs
+    const equipmentMetadataMap = await batchGetEquipmentMetadata(repairs);
+
     for (const repair of repairs) {
       if (!repair.parts || repair.parts.length === 0) {
         repair.needsClarification = false;
@@ -1515,10 +1651,10 @@ Return ONLY valid JSON array, no additional text.`;
         continue;
       }
 
-      // Build equipment context for part detection
+      // Build equipment context for part detection with actual metadata
       const context = {
         equipmentName: repair.equipment || null,
-        equipmentMetadata: {}  // TODO: Query equipment table for actual metadata
+        equipmentMetadata: repair.equipment ? (equipmentMetadataMap[repair.equipment] || {}) : {}
       };
 
       // Detect incomplete parts with equipment-specific context
@@ -2091,6 +2227,95 @@ app.put('/api/jobs/:jobNumber/session-context', async (req, res) => {
 
   } catch (error) {
     console.error('Error updating session context:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/jobs/:jobNumber/clarification
+ * Handle clarification response and store learned equipment specifications
+ *
+ * Request body:
+ * {
+ *   "equipmentName": "RTU-6",
+ *   "category": "filter",
+ *   "specKey": "filter_size",
+ *   "specValue": "24x24x2",
+ *   "originalPart": "filters",
+ *   "repairId": "optional-repair-id"
+ * }
+ */
+app.post('/api/jobs/:jobNumber/clarification', async (req, res) => {
+  try {
+    const { jobNumber } = req.params;
+    const {
+      equipmentName,
+      category,
+      specKey,
+      specValue,
+      originalPart,
+      repairId
+    } = req.body;
+
+    console.log(`\n=== PROCESSING CLARIFICATION FOR JOB ${jobNumber} ===`);
+    console.log(`Equipment: ${equipmentName}`);
+    console.log(`Category: ${category}`);
+    console.log(`Spec: ${specKey} = "${specValue}"`);
+    console.log(`Original part: "${originalPart}"`);
+
+    // Validate required fields
+    if (!equipmentName || !specKey || !specValue) {
+      return res.status(400).json({
+        error: 'Missing required fields: equipmentName, specKey, specValue'
+      });
+    }
+
+    // Store the learned specification
+    const stored = await storeEquipmentSpec(
+      equipmentName,
+      specKey,
+      specValue,
+      jobNumber
+    );
+
+    if (!stored) {
+      console.log(`⚠️  Failed to store specification`);
+      return res.status(404).json({
+        error: `Equipment ${equipmentName} not found in database`
+      });
+    }
+
+    console.log(`✓ Specification stored successfully`);
+
+    // Get updated metadata to return
+    const metadata = await getEquipmentMetadata(equipmentName);
+
+    // Re-detect the part with updated context to get complete part info
+    const { detectIncompletePart } = require('./utils/detectIncompleteParts');
+    const updatedDetection = detectIncompletePart(
+      `${originalPart} ${specValue}`,
+      {
+        equipmentName,
+        equipmentMetadata: metadata
+      }
+    );
+
+    console.log(`Updated part status: ${updatedDetection.isComplete ? 'Complete' : 'Incomplete'}`);
+    console.log(`========================\n`);
+
+    res.json({
+      success: true,
+      message: `Learned that ${equipmentName} uses ${specValue} for ${category}`,
+      equipment: equipmentName,
+      specKey: specKey,
+      specValue: specValue,
+      learnedDate: new Date().toISOString(),
+      updatedPart: updatedDetection,
+      metadata: metadata
+    });
+
+  } catch (error) {
+    console.error('Error processing clarification:', error);
     res.status(500).json({ error: error.message });
   }
 });
