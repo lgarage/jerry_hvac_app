@@ -1515,8 +1515,14 @@ Return ONLY valid JSON array, no additional text.`;
         continue;
       }
 
-      // Detect incomplete parts
-      const partDetections = detectIncompletePartsBatch(repair.parts);
+      // Build equipment context for part detection
+      const context = {
+        equipmentName: repair.equipment || null,
+        equipmentMetadata: {}  // TODO: Query equipment table for actual metadata
+      };
+
+      // Detect incomplete parts with equipment-specific context
+      const partDetections = detectIncompletePartsBatch(repair.parts, context);
 
       // Filter to only incomplete parts
       const incompleteParts = partDetections.filter(detection => !detection.isComplete);

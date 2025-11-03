@@ -3,14 +3,20 @@
  *
  * When a tech says "needs filters and batteries", the system must detect
  * that these are incomplete (missing size and type) and prompt for details.
+ *
+ * IMPORTANT: Uses equipment-specific learning, NOT generic suggestions.
+ * - First time: "What size filters does RTU-6 need?"
+ * - Later: "RTU-6 uses 24x24x2 filters. Same size?"
  */
 
-const { getPopularFilterSizes, validateFilterSize } = require('./filterSizeLookup');
+const { validateFilterSize } = require('./filterSizeLookup');
 
 /**
  * Check if a part string has complete specifications
+ * @param {string} partString - Part description
+ * @param {Object} context - Equipment context { equipmentName, equipmentMetadata }
  */
-function detectIncompletePart(partString) {
+function detectIncompletePart(partString, context = {}) {
   if (!partString) {
     return {
       isComplete: false,
@@ -36,7 +42,7 @@ function detectIncompletePart(partString) {
   ];
 
   for (const detector of detectors) {
-    const result = detector(normalized, partString);
+    const result = detector(normalized, partString, context);
     if (result.category !== 'unknown') {
       return result;
     }
@@ -68,14 +74,17 @@ function detectIncompletePart(partString) {
 
 /**
  * Detect filter specifications
+ * Uses equipment-specific learning, not generic suggestions
  */
-function detectFilter(normalized, original) {
+function detectFilter(normalized, original, context = {}) {
   const filterKeywords = ['filter', 'filters', 'air filter'];
   const hasFilterKeyword = filterKeywords.some(kw => normalized.includes(kw));
 
   if (!hasFilterKeyword) {
     return { category: 'unknown' };
   }
+
+  const { equipmentName, equipmentMetadata } = context;
 
   // Check for size pattern: 16x20x1, 24x24x2, "20 by 25 by 1", etc.
   const sizePattern = /\b(\d{1,2})\s*([xX×]|by)\s*(\d{1,2})\s*([xX×]|by)\s*(\d{1,2})\b/i;
@@ -85,58 +94,67 @@ function detectFilter(normalized, original) {
     const match = original.match(sizePattern);
     const size = `${match[1]}x${match[3]}x${match[5]}`;
 
-    // Validate against inventory
+    // Validate against inventory (for backend/quote use, NOT shown to tech)
     const validFilter = validateFilterSize(size);
 
-    if (validFilter) {
-      // Filter exists in inventory
-      return {
-        isComplete: true,
-        category: 'filter',
-        size: size,
-        validatedSize: validFilter.size,
-        inStock: true,
-        pricing: validFilter.pricing,
-        merv: validFilter.merv,
-        missingDetails: [],
-        prompt: null,
-        confidence: 0.95,
-        originalText: original
-      };
-    } else {
-      // Filter size mentioned but not in inventory
-      return {
-        isComplete: true,
-        category: 'filter',
-        size: size,
-        inStock: false,
-        warning: `${size} not found in standard inventory. Verify this size exists.`,
-        missingDetails: [],
-        prompt: null,
-        confidence: 0.7,
-        originalText: original
-      };
-    }
+    return {
+      isComplete: true,
+      category: 'filter',
+      size: size,
+      validatedSize: validFilter ? validFilter.size : size,
+      inStock: validFilter ? true : false,
+      // Pricing/MERV kept for backend only (quote generation)
+      _backendOnly: {
+        pricing: validFilter ? validFilter.pricing : null,
+        merv: validFilter ? validFilter.merv : null,
+        qtyPerCase: validFilter ? validFilter.qtyPerCase : null
+      },
+      warning: validFilter ? null : `${size} not in standard inventory. Verify this size exists.`,
+      missingDetails: [],
+      prompt: null,
+      confidence: validFilter ? 0.95 : 0.7,
+      originalText: original,
+      learnAndStore: true  // Store in equipment.metadata for next time
+    };
   }
 
-  // No size specified - suggest popular sizes from inventory
-  const popularSizes = getPopularFilterSizes();
+  // No size specified - check equipment history
+  const knownFilterSize = equipmentMetadata?.filter_size;
 
-  return {
-    isComplete: false,
-    category: 'filter',
-    missingDetails: ['size'],
-    prompt: 'What size filter? (e.g., ' + popularSizes.slice(0, 3).join(', ') + ')',
-    confidence: 0.9,
-    originalText: original,
-    suggestions: popularSizes
-  };
+  if (knownFilterSize) {
+    // Equipment has known filter size - suggest it
+    return {
+      isComplete: false,
+      category: 'filter',
+      missingDetails: ['size'],
+      prompt: equipmentName
+        ? `${equipmentName} uses ${knownFilterSize} filters. Same size?`
+        : `This unit uses ${knownFilterSize} filters. Same size?`,
+      confidence: 0.9,
+      originalText: original,
+      suggestedSize: knownFilterSize,
+      allowConfirmation: true  // Tech can say "yes" or provide new size
+    };
+  } else {
+    // First time for this equipment - ask without generic suggestions
+    return {
+      isComplete: false,
+      category: 'filter',
+      missingDetails: ['size'],
+      prompt: equipmentName
+        ? `What size filters does ${equipmentName} need?`
+        : 'What size filters are needed?',
+      confidence: 0.9,
+      originalText: original,
+      learnAndStore: true  // Store answer in equipment.metadata
+    };
+  }
 }
 
 /**
  * Detect battery specifications
  */
-function detectBattery(normalized, original) {
+function detectBattery(normalized, original, context = {}) {
   const batteryKeywords = ['battery', 'batteries', 'cell', 'cells'];
   const hasBatteryKeyword = batteryKeywords.some(kw => normalized.includes(kw));
 
@@ -187,7 +205,7 @@ function detectBattery(normalized, original) {
 /**
  * Detect contactor specifications
  */
-function detectContactor(normalized, original) {
+function detectContactor(normalized, original, context = {}) {
   const contactorKeywords = ['contactor', 'relay'];
   const hasContactorKeyword = contactorKeywords.some(kw => normalized.includes(kw));
 
@@ -230,7 +248,7 @@ function detectContactor(normalized, original) {
 /**
  * Detect capacitor specifications
  */
-function detectCapacitor(normalized, original) {
+function detectCapacitor(normalized, original, context = {}) {
   const capacitorKeywords = ['capacitor', 'cap', 'run cap', 'start cap', 'dual run'];
   const hasCapacitorKeyword = capacitorKeywords.some(kw => normalized.includes(kw));
 
@@ -273,7 +291,7 @@ function detectCapacitor(normalized, original) {
 /**
  * Detect refrigerant specifications
  */
-function detectRefrigerant(normalized, original) {
+function detectRefrigerant(normalized, original, context = {}) {
   const refrigerantKeywords = ['refrigerant', 'freon', 'charge', 'r-410a', 'r-22', 'r410a', 'r22'];
   const hasRefrigerantKeyword = refrigerantKeywords.some(kw => normalized.includes(kw));
 
@@ -325,7 +343,7 @@ function detectRefrigerant(normalized, original) {
 /**
  * Detect belt specifications
  */
-function detectBelt(normalized, original) {
+function detectBelt(normalized, original, context = {}) {
   const beltKeywords = ['belt', 'v-belt', 'v belt'];
   const hasBeltKeyword = beltKeywords.some(kw => normalized.includes(kw));
 
@@ -360,7 +378,7 @@ function detectBelt(normalized, original) {
 /**
  * Detect motor specifications
  */
-function detectMotor(normalized, original) {
+function detectMotor(normalized, original, context = {}) {
   const motorKeywords = ['motor', 'blower motor', 'fan motor', 'condenser motor'];
   const hasMotorKeyword = motorKeywords.some(kw => normalized.includes(kw));
 
@@ -406,7 +424,7 @@ function detectMotor(normalized, original) {
 /**
  * Detect thermostat specifications
  */
-function detectThermostat(normalized, original) {
+function detectThermostat(normalized, original, context = {}) {
   const thermostatKeywords = ['thermostat', 'tstat', 't-stat'];
   const hasThermostatKeyword = thermostatKeywords.some(kw => normalized.includes(kw));
 
@@ -443,10 +461,12 @@ function detectThermostat(normalized, original) {
 
 /**
  * Batch check multiple parts
+ * @param {Array<string>} parts - Array of part strings
+ * @param {Object} context - Equipment context { equipmentName, equipmentMetadata }
  */
-function detectIncompletePartsBatch(parts) {
+function detectIncompletePartsBatch(parts, context = {}) {
   if (!Array.isArray(parts)) return [];
-  return parts.map(part => detectIncompletePart(part));
+  return parts.map(part => detectIncompletePart(part, context));
 }
 
 /**
