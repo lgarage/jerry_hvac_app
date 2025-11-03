@@ -17,6 +17,7 @@
 - ✅ **Incomplete part detection** - detectIncompleteParts.js detects missing specs (24/24 tests passing)
 - ✅ **Parser integration** - parseRepairs() now flags incomplete parts with prompts
 - ✅ **Filter inventory system** - 36 filter sizes with pricing, validation, smart suggestions
+- ✅ **Equipment-specific learning** - System learns each unit's specs, no generic suggestions
 
 ### Previous Session (Nov 2)
 - ✅ **Wired parts to jobs** - `/api/submit-repairs` now creates job records with `parts_used` JSONB
@@ -191,6 +192,28 @@
      * "24x24x2 filters" → validates, shows $9.35/ea pricing
      * "30x30x1 filters" → warns "not in standard inventory"
    - Test suite: All validations passing ✅
+
+6. **Equipment-Specific Learning System (CRITICAL ARCHITECTURAL CHANGE)**
+   - **Business Context Discovered:**
+     * PM done 2-4x/year - filters/belts changed during PM
+     * Filters RARELY needed outside PM for existing accounts
+     * Each unit has SPECIFIC sizes (RTU-6 → 24x24x2, not random)
+     * Technicians DON'T need pricing (only for quote generation)
+   - **Old Approach (WRONG):**
+     * "filters" → suggests generic "14x20x1, 16x20x1, 16x25x1"
+     * Shows pricing to technician ($9.35/ea)
+     * Useless - RTU-6 doesn't use those generic sizes
+   - **New Approach (CORRECT):**
+     * Checks equipment.metadata.filter_size for this specific unit
+     * If known: "RTU-6 uses 24x24x2 filters. Same size?"
+     * If unknown: "What size filters does RTU-6 need?" (learns and stores)
+     * Pricing hidden from tech → _backendOnly field for quotes
+   - **Implementation:**
+     * detectIncompletePart() now accepts equipment context
+     * Queries equipment metadata for learned specifications
+     * Stores tech's answers in equipment.metadata for next time
+     * Each unit builds its own specification profile over time
+   - **Documentation:** docs/EQUIPMENT_LEARNING_SYSTEM.md
 
 **Next Steps (Phase 2 - Frontend Integration):**
 1. Wire transcript API to voice recording flow
