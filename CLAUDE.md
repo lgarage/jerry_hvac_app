@@ -9,31 +9,55 @@
 
 ## ⚠️ MANDATORY PHASE CHECK - READ THIS FIRST ⚠️
 
-**BEFORE starting ANY work, you MUST check Phase 1 status and get user approval.**
+**BEFORE starting ANY work, you MUST check PROGRESS.md for the current phase.**
 
-### Phase 1 Checklist (Current Status: 3/6 Complete)
+### Current Phase (Check PROGRESS.md line 4):
+**Phase 1 - MVP Foundation** (3/6 items complete)
+
+### Phase Management Rules:
+
+**1. Check Current Phase**
+- Read `PROGRESS.md` line 4: `**Current Phase:** Phase X - Name`
+- Read the checklist for that phase
+- Identify what's complete vs. remaining
+
+**2. Classify the Request**
+When user asks for something:
+- ✅ **Current Phase work** → Proceed
+- ❌ **Future Phase work** → Auto-defer with triage
+- 🚨 **BLOCKER** (prevents current phase) → Fix quickly, return to phase
+
+**3. Auto-Defer Non-Phase Work**
+If request doesn't match current phase:
+```
+"That's a great [Phase X] feature! I've added it to the Phase X backlog in PROGRESS.md.
+
+Let's stay focused on [Current Phase]. We're at X/Y items complete. Which item should we tackle next?"
+```
+
+**4. Add to Appropriate Backlog**
+When auto-deferring, update PROGRESS.md:
+- **Phase 2 (Intelligence & Learning)**: AI features, learning systems, smart suggestions, transcript tracking
+- **Phase 3 (Mobile & Offline)**: PWA, offline mode, mobile optimization, push notifications
+- **Phase 4 (Business)**: Invoicing, customer portal, reporting, analytics
+
+Format: `- ✨ **Feature name** - Brief description`
+
+**5. When in Doubt**
+Ask: *"Is this [current phase] work, or should I add it to a future phase backlog?"*
+
+### Current Phase 1 Checklist (3/6 Complete)
 
 - [x] **1. Auto job numbers** ✅
 - [x] **2. Model/serial storage** ✅
 - [x] **3. Parts parsing to jobs** ✅
 - [ ] **4. OCR nameplate extraction** ⏳ (4-6 hours)
 - [ ] **5. Photo documentation** ⏳ (6-8 hours)
-- [ ] **6. Labor hours + signature** ⏳ (2-4 hours)
+- [ ] **6. Labor hours + signature** ⏳ (2-4 hours) ← **QUICKEST WIN**
 
-### Rules for ALL Work:
+### The Goal: Complete Current Phase Before Moving On
 
-1. **Check PROGRESS.md** - Verify current phase status
-2. **Is this request Phase 1 work?**
-   - ✅ YES → Proceed
-   - ❌ NO → Say: *"I'll note that for later, but let's finish Phase 1 first. We're at X/6 items. Which Phase 1 item should we tackle?"*
-3. **Is this a BLOCKER** (prevents Phase 1 work)?
-   - ✅ YES → Fix it quickly, then return to Phase 1
-   - ❌ NO → Defer to after Phase 1 MVP ships
-4. **When in doubt** → Ask user: *"Is this Phase 1 work, or should we finish Phase 1 first?"*
-
-### The Goal: Ship Phase 1 MVP (6/6 items) Before Adding Features
-
-**No exceptions.** Stay disciplined. The user needs a working MVP, not perfect features.
+**No exceptions.** Stay disciplined. Ship the MVP, then enhance.
 
 ---
 

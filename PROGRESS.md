@@ -1,8 +1,33 @@
 # Jerry HVAC - Session Progress Tracker
 
 **Last Updated:** November 3, 2025 (New session - transcript tracking feature)
-**Current Phase:** Phase 1 MVP (50% complete - 3/6 items)
-**Session Focus:** Voice transcript linking, unit grouping & timestamp tracking
+**Current Phase:** Phase 1 - MVP Foundation
+**Phase Progress:** 50% complete (3/6 items)
+**Session Focus:** Labor hours + signature (Phase 1 Item #6)
+
+---
+
+## 📋 Phase Definitions
+
+### Phase 1 - MVP Foundation (Current)
+**Goal:** Core field documentation features needed for beta customer
+**Timeline:** 15-20 hours remaining
+**Deliverable:** Functional app ready for real HVAC tech testing
+
+### Phase 2 - Intelligence & Learning
+**Goal:** AI-powered assistance and equipment learning features
+**Timeline:** TBD after Phase 1 ships
+**Deliverable:** Smart prompts, part suggestions, equipment history
+
+### Phase 3 - Mobile & Offline
+**Goal:** PWA, offline mode, mobile optimization
+**Timeline:** TBD after Phase 2 ships
+**Deliverable:** Works offline in field, native-like mobile experience
+
+### Phase 4 - Business Features
+**Goal:** Invoicing, customer portal, reporting
+**Timeline:** TBD after Phase 3 ships
+**Deliverable:** Revenue-generating business features
 
 ---
 
@@ -361,6 +386,53 @@ Voice-first HVAC field service documentation. Techs speak repairs, AI extracts p
 2. Read "Last Session Notes" for context
 3. Invoke jerry-hvac-roadmap skill for guidance
 4. Ask: "What should I work on next?"
+
+---
+
+## 📦 Future Phase Backlogs
+
+> **Auto-managed by Claude:** When ideas come up that don't fit the current phase, they're automatically added here and triaged to the appropriate phase.
+
+### Phase 2 Backlog - Intelligence & Learning
+**Status:** Not started (ships after Phase 1)
+
+**Features to build:**
+- ✨ **Transcript tracking & unit grouping** (Backend complete, needs frontend)
+  - Wire transcript API to voice recording flow
+  - Build UnitCard component (group repairs by equipment)
+  - Build TranscriptDrawer component (full history with timestamps)
+  - Session context tracking for follow-up commands
+- ✨ **Equipment learning system** (Backend complete, needs clarification UI)
+  - Frontend clarification flow for incomplete parts
+  - Display equipment-specific prompts ("RTU-6 uses 24x24x2 filters. Same size?")
+  - Store learned specifications via POST /api/jobs/:jobNumber/clarification
+  - Equipment-specific part suggestions based on history
+- ✨ **Smart part detection** (Already implemented, needs testing)
+  - Incomplete part detection (24/24 tests passing)
+  - Equipment metadata integration
+  - Filter inventory validation
+
+**Priority:** High - These features differentiate from competitors
+
+---
+
+### Phase 3 Backlog - Mobile & Offline
+**Status:** Not started (ships after Phase 2)
+
+**Features to build:**
+- _(None yet - add ideas here as they come up)_
+
+**Priority:** Medium - Needed for field reliability
+
+---
+
+### Phase 4 Backlog - Business Features
+**Status:** Not started (ships after Phase 3)
+
+**Features to build:**
+- _(None yet - add ideas here as they come up)_
+
+**Priority:** Lower - Revenue features after product-market fit
 
 ---
 
