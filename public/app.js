@@ -3325,12 +3325,23 @@ async function submitFinalRepairs() {
   try {
     showStatus('Submitting final repairs...', 'info');
 
+    // Get labor hours and tech signature from form
+    const laborHoursInput = document.getElementById('laborHours');
+    const techSignatureInput = document.getElementById('techSignature');
+
+    const laborHours = laborHoursInput && laborHoursInput.value ? parseFloat(laborHoursInput.value) : null;
+    const techSignature = techSignatureInput && techSignatureInput.value ? techSignatureInput.value.trim() : null;
+
     const response = await fetch('/api/submit-repairs', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ repairs: currentRepairs })
+      body: JSON.stringify({
+        repairs: currentRepairs,
+        labor_hours: laborHours,
+        tech_signature: techSignature
+      })
     });
 
     if (!response.ok) {

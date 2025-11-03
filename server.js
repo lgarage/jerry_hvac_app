@@ -1894,7 +1894,7 @@ let submittedRepairs = [];
 // POST /api/submit-repairs - Create job records from parsed repairs
 app.post('/api/submit-repairs', async (req, res) => {
   try {
-    const { repairs, customer_id } = req.body;
+    const { repairs, customer_id, labor_hours, tech_signature } = req.body;
 
     if (!repairs || !Array.isArray(repairs)) {
       return res.status(400).json({ error: 'Invalid repairs data' });
@@ -1909,6 +1909,8 @@ app.post('/api/submit-repairs', async (req, res) => {
     console.log(`\n=== CREATING JOBS FROM REPAIRS ===`);
     console.log(`Customer ID: ${defaultCustomerId}`);
     console.log(`Total Repairs: ${repairs.length}`);
+    console.log(`Labor Hours: ${labor_hours || 'Not specified'}`);
+    console.log(`Tech Signature: ${tech_signature || 'Not specified'}`);
 
     // Create a job for each repair
     for (const repair of repairs) {
@@ -1937,6 +1939,8 @@ app.post('/api/submit-repairs', async (req, res) => {
             problem_description,
             tech_notes,
             parts_used,
+            labor_hours,
+            tech_signature,
             location_code
           ) VALUES (
             ${defaultCustomerId},
@@ -1946,6 +1950,8 @@ app.post('/api/submit-repairs', async (req, res) => {
             ${repair.problem || 'Service call'},
             ${repair.notes || repair.raw_transcription || ''},
             ${JSON.stringify(partsUsed)},
+            ${labor_hours || null},
+            ${tech_signature || null},
             ${'N'}
           )
           RETURNING *

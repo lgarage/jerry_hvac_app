@@ -1101,6 +1101,32 @@
 
         <div id="statusMessage" class="hidden"></div>
 
+        <!-- Labor Hours and Signature -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px;">
+          <div class="input-section">
+            <label for="laborHours">Labor Hours</label>
+            <input
+              type="number"
+              id="laborHours"
+              step="0.25"
+              min="0"
+              max="99.99"
+              placeholder="e.g., 2.5"
+              style="width: 100%; padding: 10px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 1rem;"
+            />
+          </div>
+          <div class="input-section">
+            <label for="techSignature">Technician Name</label>
+            <input
+              type="text"
+              id="techSignature"
+              placeholder="e.g., John Smith"
+              maxlength="100"
+              style="width: 100%; padding: 10px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 1rem;"
+            />
+          </div>
+        </div>
+
         <div class="button-group">
           <button id="submitBtn" class="btn-primary">
             <span id="submitText">Parse Notes</span>
