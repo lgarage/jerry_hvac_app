@@ -87,22 +87,13 @@ async function seedFilters() {
         // Build description
         const description = `${filter.width}x${filter.height}x${filter.depth} inch filter, MERV ${filter.merv}, ${filter.qtyPerCase} per case. ${filter.popular ? 'Popular size.' : ''}`.trim();
 
-        // Build common uses from common names
-        const commonUses = `Common names: ${filter.commonNames.join(', ')}`;
-
-        // Store full pricing in metadata
-        const metadata = {
-          dimensions: {
-            width: filter.width,
-            height: filter.height,
-            depth: filter.depth
-          },
-          merv: filter.merv,
-          qtyPerCase: filter.qtyPerCase,
-          pricing: filter.pricing,
-          popular: filter.popular,
-          commonNames: filter.commonNames
-        };
+        // Build common uses array from common names and pricing info
+        const commonUsesArray = [
+          ...filter.commonNames,
+          `Tier pricing: 12qty=$${filter.pricing.tier1.price}, 36qty=$${filter.pricing.tier2.price}, 60+qty=$${filter.pricing.tier3.price}`,
+          `${filter.qtyPerCase} per case`,
+          filter.popular ? 'POPULAR SIZE' : 'Standard size'
+        ];
 
         await sql`
           INSERT INTO parts (
@@ -112,8 +103,7 @@ async function seedFilters() {
             category,
             type,
             price,
-            common_uses,
-            metadata
+            common_uses
           ) VALUES (
             ${'FILTER-' + filter.size.replace(/x/g, '-')},
             ${filter.size + ' Air Filter'},
@@ -121,8 +111,7 @@ async function seedFilters() {
             ${'Filters'},
             ${'Consumable'},
             ${price},
-            ${commonUses},
-            ${JSON.stringify(metadata)}
+            ${commonUsesArray}
           )
         `;
 
@@ -157,7 +146,7 @@ async function seedFilters() {
       SELECT part_number, name, price
       FROM parts
       WHERE category = 'Filters'
-        AND metadata->>'popular' = 'true'
+        AND 'POPULAR SIZE' = ANY(common_uses)
       ORDER BY name
       LIMIT 10
     `;
