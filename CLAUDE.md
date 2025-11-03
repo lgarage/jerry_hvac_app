@@ -46,14 +46,26 @@ Format: `- ✨ **Feature name** - Brief description`
 **5. When in Doubt**
 Ask: *"Is this [current phase] work, or should I add it to a future phase backlog?"*
 
-### Current Phase 1 Checklist (4/6 Complete) 🎯
+### Current Phase 1 Checklist (3/6 Complete, 1 Awaiting Test)
 
-- [x] **1. Auto job numbers** ✅
-- [x] **2. Model/serial storage** ✅
-- [x] **3. Parts parsing to jobs** ✅
+- [x] **1. Auto job numbers** ✅ (Tested & verified)
+- [x] **2. Model/serial storage** ✅ (Tested & verified)
+- [x] **3. Parts parsing to jobs** ✅ (Tested & verified)
 - [ ] **4. OCR nameplate extraction** ⏳ (4-6 hours)
 - [ ] **5. Photo documentation** ⏳ (6-8 hours)
-- [x] **6. Labor hours + signature** ✅ **JUST COMPLETED!**
+- [ ] **6. Labor hours + signature** 🧪 **AWAITING USER TEST** (Code complete, needs verification)
+
+### The "Done" Definition
+
+**CRITICAL:** Items are NOT complete until user tests and confirms they work.
+
+**Status progression:**
+1. ⏳ **Pending** - Not started
+2. 🔨 **In Progress** - Code being written
+3. 🧪 **Awaiting Test** - Code complete, user needs to verify
+4. ✅ **Complete** - User tested and confirmed working
+
+**NEVER mark an item ✅ Complete without user confirmation!**
 
 ### The Goal: Complete Current Phase Before Moving On
 

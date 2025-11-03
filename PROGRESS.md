@@ -2,8 +2,8 @@
 
 **Last Updated:** November 3, 2025
 **Current Phase:** Phase 1 - MVP Foundation
-**Phase Progress:** 67% complete (4/6 items) 🎯
-**Session Focus:** Completed labor hours + signature! Next: OCR or Photos
+**Phase Progress:** 50% complete (3/6 verified, 1 awaiting test) 🧪
+**Session Focus:** Labor hours + signature code complete, needs user testing
 
 ---
 
@@ -34,7 +34,11 @@
 ## 🎯 Where We Are Right Now
 
 ### Just Completed (This Session - Nov 3)
-- ✅ **PHASE 1 ITEM #6: Labor Hours + Signature** ⭐ - Fields added to form, API wired, database ready
+- 🧪 **PHASE 1 ITEM #6: Labor Hours + Signature** - Code complete, **AWAITING USER TEST**
+  - Frontend: Labor hours (number input) + Tech name (text input) added to form
+  - Backend: API accepts and stores both fields in database
+  - Wiring: Form → API → Database complete
+  - **USER: Please test before marking complete!**
 - ✅ **Phase management system** - Scalable phase checking in CLAUDE.md, auto-defer to backlogs
 - ✅ **Filter inventory seed** - 36 filters imported into parts table
 - ✅ **Database connection fixed** - Supabase connection working with pooler
@@ -63,7 +67,36 @@
 - ⏳ **Session context tracking** - Track "lastMentionedUnit" for follow-up commands
 - ⏳ **Clarification UI** - Frontend flow for incomplete parts (prompt → response → store)
 
-### Ready to Test
+### 🧪 Ready for User Testing (CRITICAL - Phase 1 Item #6)
+
+**Item #6: Labor Hours + Signature**
+**Status:** Code complete, needs user verification before marking ✅
+
+**Test Steps:**
+1. Start server: `npm start` (on your local machine)
+2. Go to: `http://localhost:3000`
+3. Enter some job notes (type or voice record)
+4. **NEW FIELDS:** Fill in Labor Hours (e.g., "2.5") and Technician Name (e.g., "John Smith")
+5. Click "Parse Notes" to submit
+6. **Verify:** Check that the job was created successfully
+7. **Optional:** Query database to confirm fields stored:
+   ```sql
+   SELECT job_number, labor_hours, tech_signature, created_at
+   FROM jobs ORDER BY created_at DESC LIMIT 1;
+   ```
+
+**Expected Result:**
+- ✅ Form submits without errors
+- ✅ Labor hours and tech name are saved to database
+- ✅ Both fields display in job record
+
+**If successful:** Comment "Item #6 tested and working" and I'll mark it ✅ complete
+
+**If issues:** Report what broke and I'll fix it immediately
+
+---
+
+### Other Testing (Phase 2 features - defer until Phase 1 ships)
 - [x] Incomplete detection unit tests (24/24 passing ✅)
 - [x] Equipment learning unit tests (6/6 scenarios passing ✅)
 - [ ] Run migration 006 (needs .env with DATABASE_URL)
@@ -76,16 +109,17 @@
 
 ---
 
-## 📊 Phase 1 Checklist (4/6 Complete) 🎯
+## 📊 Phase 1 Checklist (3/6 Verified, 1 Awaiting Test)
 
-- [x] **1. Auto job numbers** ✅ (0001NRP format implemented)
-- [x] **2. Model/serial storage** ✅ (Equipment table + CSV import)
-- [x] **3. Parts parsing to jobs** ✅ (Parts saved to jobs.parts_used JSONB)
+- [x] **1. Auto job numbers** ✅ (Tested & verified by user)
+- [x] **2. Model/serial storage** ✅ (Tested & verified by user)
+- [x] **3. Parts parsing to jobs** ✅ (Tested & verified by user)
 - [ ] **4. OCR nameplate extraction** ⏳ (Code exists, needs UI integration)
 - [ ] **5. Photo documentation** ⏳ (Schema ready, needs camera UI)
-- [x] **6. Labor hours + signature** ✅ (Form fields + API wired, stores in DB)
+- [ ] **6. Labor hours + signature** 🧪 **AWAITING USER TEST** (Code complete)
 
-**Progress:** 67% complete! → 2 items left: #4 (OCR) or #5 (Photos)
+**Progress:** 50% verified (3/6) + 1 pending test
+**Next:** User tests #6, then tackle #4 (OCR) or #5 (Photos)
 
 ---
 
