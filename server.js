@@ -1894,10 +1894,24 @@ let submittedRepairs = [];
 // POST /api/submit-repairs - Create job records from parsed repairs
 app.post('/api/submit-repairs', async (req, res) => {
   try {
-    const { repairs, customer_id, labor_hours, tech_signature } = req.body;
+    const {
+      repairs,
+      customer_id,
+      tech_name,
+      work_date,
+      labor_hours,
+      signature_base64
+    } = req.body;
 
     if (!repairs || !Array.isArray(repairs)) {
       return res.status(400).json({ error: 'Invalid repairs data' });
+    }
+
+    // Validate timecard data
+    if (labor_hours && (!tech_name || !work_date || !signature_base64)) {
+      return res.status(400).json({
+        error: 'Timecard requires: tech_name, work_date, labor_hours, and signature'
+      });
     }
 
     // Default to customer_id 1 (Planet Fitness) if not provided
@@ -1910,7 +1924,9 @@ app.post('/api/submit-repairs', async (req, res) => {
     console.log(`Customer ID: ${defaultCustomerId}`);
     console.log(`Total Repairs: ${repairs.length}`);
     console.log(`Labor Hours: ${labor_hours || 'Not specified'}`);
-    console.log(`Tech Signature: ${tech_signature || 'Not specified'}`);
+    console.log(`Tech Name: ${tech_name || 'Not specified'}`);
+    console.log(`Work Date: ${work_date || 'Not specified'}`);
+    console.log(`Signature: ${signature_base64 ? 'Provided' : 'Not provided'}`);
 
     // Create a job for each repair
     for (const repair of repairs) {
@@ -1929,6 +1945,15 @@ app.post('/api/submit-repairs', async (req, res) => {
           match_confidence: part.match_confidence || null
         }));
 
+        // Build metadata for timecard info
+        const metadata = {
+          timecard: tech_name ? {
+            tech_name: tech_name,
+            work_date: work_date,
+            signature_timestamp: new Date().toISOString()
+          } : null
+        };
+
         // Create job record
         const job = await sql`
           INSERT INTO jobs (
@@ -1941,7 +1966,8 @@ app.post('/api/submit-repairs', async (req, res) => {
             parts_used,
             labor_hours,
             tech_signature,
-            location_code
+            location_code,
+            metadata
           ) VALUES (
             ${defaultCustomerId},
             ${null},
@@ -1951,8 +1977,9 @@ app.post('/api/submit-repairs', async (req, res) => {
             ${repair.notes || repair.raw_transcription || ''},
             ${JSON.stringify(partsUsed)},
             ${labor_hours || null},
-            ${tech_signature || null},
-            ${'N'}
+            ${signature_base64 || null},
+            ${'N'},
+            ${JSON.stringify(metadata)}
           )
           RETURNING *
         `;

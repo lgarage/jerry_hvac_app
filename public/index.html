@@ -1101,35 +1101,79 @@
 
         <div id="statusMessage" class="hidden"></div>
 
-        <!-- Labor Hours and Signature -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px;">
-          <div class="input-section">
-            <label for="laborHours">Labor Hours</label>
+        <!-- Time Tracking Section -->
+        <div style="border-top: 2px solid #e5e7eb; margin-top: 24px; padding-top: 24px;">
+          <h3 style="margin: 0 0 16px 0; font-size: 1.1rem; color: #374151;">⏱️ Time Card Entry</h3>
+
+          <!-- Tech & Date Row -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+            <div class="input-section">
+              <label for="techName">Technician *</label>
+              <select
+                id="techName"
+                required
+                style="width: 100%; padding: 10px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 1rem; background: white;"
+              >
+                <option value="">Select technician...</option>
+                <option value="Steve Chew">Steve Chew</option>
+                <option value="Mike Johnson">Mike Johnson</option>
+                <option value="Dave Martinez">Dave Martinez</option>
+                <option value="Chris Anderson">Chris Anderson</option>
+                <option value="Tom Williams">Tom Williams</option>
+                <option value="Sarah Davis">Sarah Davis</option>
+                <option value="James Brown">James Brown</option>
+                <option value="Lisa Garcia">Lisa Garcia</option>
+              </select>
+            </div>
+            <div class="input-section">
+              <label for="workDate">Date *</label>
+              <input
+                type="date"
+                id="workDate"
+                required
+                style="width: 100%; padding: 10px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 1rem;"
+              />
+            </div>
+          </div>
+
+          <!-- Hours Worked -->
+          <div class="input-section" style="margin-bottom: 16px;">
+            <label for="laborHours">Hours Worked * <span style="font-size: 0.85rem; color: #6b7280;">(0.25 increments)</span></label>
             <input
               type="number"
               id="laborHours"
               step="0.25"
-              min="0"
-              max="99.99"
-              placeholder="e.g., 2.5"
+              min="0.25"
+              max="24"
+              placeholder="e.g., 2.5, 4.0, 8.25"
+              required
               style="width: 100%; padding: 10px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 1rem;"
             />
           </div>
+
+          <!-- Signature Canvas -->
           <div class="input-section">
-            <label for="techSignature">Technician Name</label>
-            <input
-              type="text"
-              id="techSignature"
-              placeholder="e.g., John Smith"
-              maxlength="100"
-              style="width: 100%; padding: 10px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 1rem;"
-            />
+            <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span>Signature * <span style="font-size: 0.85rem; color: #6b7280;">(Sign to certify hours)</span></span>
+              <button
+                type="button"
+                id="clearSignature"
+                style="padding: 4px 12px; font-size: 0.85rem; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer;"
+              >Clear</button>
+            </label>
+            <canvas
+              id="signatureCanvas"
+              width="600"
+              height="150"
+              style="width: 100%; max-width: 600px; height: 150px; border: 2px solid #d1d5db; border-radius: 8px; background: white; touch-action: none; cursor: crosshair;"
+            ></canvas>
+            <input type="hidden" id="signatureData" />
           </div>
         </div>
 
-        <div class="button-group">
+        <div class="button-group" style="margin-top: 20px;">
           <button id="submitBtn" class="btn-primary">
-            <span id="submitText">Parse Notes</span>
+            <span id="submitText">Submit Job & Time Card</span>
           </button>
         </div>
       </div>

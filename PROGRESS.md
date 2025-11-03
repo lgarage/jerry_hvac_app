@@ -35,9 +35,35 @@
 
 ### Just Completed (This Session - Nov 3)
 - 🧪 **PHASE 1 ITEM #6: Labor Hours + Signature** - Code complete, **AWAITING USER TEST**
-  - Frontend: Labor hours (number input) + Tech name (text input) added to form
-  - Backend: API accepts and stores both fields in database
-  - Wiring: Form → API → Database complete
+  - **Frontend (public/index.html:1104-1178):**
+    * Tech dropdown with 8 hardcoded names (Steve Chew, Mike Johnson, etc.)
+    * Date field defaulting to today
+    * Hours input with 0.25 increments (min 0.25, max 24)
+    * HTML5 signature canvas (600x150px, touch + mouse support)
+    * Clear signature button
+  - **Signature Canvas (public/app.js:4578-4670):**
+    * Touch event support for mobile
+    * Mouse event support for desktop
+    * Stores base64 PNG in hidden field
+    * Clear functionality
+  - **Validation (public/app.js:3319-3398):**
+    * Requires tech selection
+    * Requires date
+    * Requires hours > 0
+    * Requires signature (canvas not empty)
+    * Focus on first invalid field
+  - **Voice Commands (public/app.js:1788-1874):**
+    * "I worked 4 hours" → auto-fills 4.0
+    * "worked 2 and a half hours" → auto-fills 2.5
+    * "4 and a quarter hours" → auto-fills 4.25
+    * "4 point 5 hours" → auto-fills 4.5
+    * "Sign timecard" → scrolls to and highlights signature canvas
+    * Green highlight effect on successful fill
+  - **Backend (server.js:1895-1985):**
+    * Accepts tech_name, work_date, labor_hours, signature_base64
+    * Stores signature as base64 PNG in tech_signature column
+    * Stores timecard metadata in JSONB (tech_name, work_date, signature_timestamp)
+    * Validation for complete timecard data
   - **USER: Please test before marking complete!**
 - ✅ **Phase management system** - Scalable phase checking in CLAUDE.md, auto-defer to backlogs
 - ✅ **Filter inventory seed** - 36 filters imported into parts table
@@ -76,19 +102,35 @@
 1. Start server: `npm start` (on your local machine)
 2. Go to: `http://localhost:3000`
 3. Enter some job notes (type or voice record)
-4. **NEW FIELDS:** Fill in Labor Hours (e.g., "2.5") and Technician Name (e.g., "John Smith")
-5. Click "Parse Notes" to submit
-6. **Verify:** Check that the job was created successfully
-7. **Optional:** Query database to confirm fields stored:
-   ```sql
-   SELECT job_number, labor_hours, tech_signature, created_at
-   FROM jobs ORDER BY created_at DESC LIMIT 1;
-   ```
+4. Click "Parse Notes" to see repairs
+5. Scroll to **"⏱️ Time Card Entry"** section at bottom
+6. **NEW FIELDS TEST:**
+   - Select a technician from dropdown (e.g., "Steve Chew")
+   - Date should auto-fill with today's date
+   - Enter labor hours (e.g., "2.5" or "4.25")
+   - Sign in the signature canvas (draw with mouse or touch)
+7. **VOICE COMMAND TEST (Optional):**
+   - Record voice: "I worked 4 hours"
+   - Should auto-fill hours field with 4.0 and show green highlight
+   - Try: "worked 2 and a half hours" → should fill 2.5
+   - Try: "Sign timecard" → should scroll to and highlight canvas
+8. Click "Submit Job & Time Card"
+9. **Verify:** Success message shows with hours and tech name
+10. **Database Check (Optional):**
+    ```sql
+    SELECT job_number, labor_hours, tech_signature, metadata
+    FROM jobs ORDER BY created_at DESC LIMIT 1;
+    ```
+    - `labor_hours` should show your entered value (e.g., 2.5)
+    - `tech_signature` should show base64 PNG string starting with "data:image/png;base64,"
+    - `metadata` should show timecard info with tech_name and work_date
 
 **Expected Result:**
-- ✅ Form submits without errors
-- ✅ Labor hours and tech name are saved to database
-- ✅ Both fields display in job record
+- ✅ Form validates all required fields before submit
+- ✅ Voice commands auto-fill hours field
+- ✅ Signature canvas works on both mouse and touch
+- ✅ Success message shows hours and tech name
+- ✅ Database stores all timecard fields correctly
 
 **If successful:** Comment "Item #6 tested and working" and I'll mark it ✅ complete
 

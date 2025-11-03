@@ -1785,6 +1785,94 @@ async function submitToBackend(audio, text) {
 }
 
 function displayResults(result) {
+  // ============================================================================
+  // VOICE COMMAND: HOURS ENTRY
+  // Parse phrases like "I worked 4 hours" or "worked 2 and a half hours"
+  // ============================================================================
+  const transcription = (result.transcription || result.raw_transcription || '').toLowerCase();
+  const laborHoursField = document.getElementById('laborHours');
+
+  if (laborHoursField && transcription) {
+    // Pattern 1: "I worked X hours" / "worked X hours"
+    const hoursPattern1 = /(?:i\s+)?worked\s+(\d+(?:\.\d+)?)\s+(?:and\s+a\s+)?(?:half\s+)?hours?/i;
+    const match1 = transcription.match(hoursPattern1);
+
+    // Pattern 2: "X and a half hours" / "X and a quarter hours"
+    const hoursPattern2 = /(\d+)\s+and\s+a\s+(half|quarter)\s+hours?/i;
+    const match2 = transcription.match(hoursPattern2);
+
+    // Pattern 3: "X point X hours" (e.g., "4 point 5 hours")
+    const hoursPattern3 = /(\d+)\s+point\s+(\d+)\s+hours?/i;
+    const match3 = transcription.match(hoursPattern3);
+
+    // Pattern 4: Simple "X hours"
+    const hoursPattern4 = /^(\d+(?:\.\d+)?)\s+hours?$/i;
+    const match4 = transcription.match(hoursPattern4);
+
+    let hoursValue = null;
+
+    if (match1) {
+      hoursValue = parseFloat(match1[1]);
+      // Check for "and a half" or "and a quarter" after the number
+      if (transcription.includes('and a half')) {
+        hoursValue += 0.5;
+      } else if (transcription.includes('and a quarter')) {
+        hoursValue += 0.25;
+      }
+    } else if (match2) {
+      hoursValue = parseFloat(match2[1]);
+      const fraction = match2[2].toLowerCase();
+      if (fraction === 'half') {
+        hoursValue += 0.5;
+      } else if (fraction === 'quarter') {
+        hoursValue += 0.25;
+      }
+    } else if (match3) {
+      // Convert "4 point 5" to 4.5
+      hoursValue = parseFloat(match3[1] + '.' + match3[2]);
+    } else if (match4) {
+      hoursValue = parseFloat(match4[1]);
+    }
+
+    // If we found a valid hours value, populate the field
+    if (hoursValue !== null && hoursValue > 0 && hoursValue <= 24) {
+      // Round to nearest 0.25 increment
+      hoursValue = Math.round(hoursValue * 4) / 4;
+      laborHoursField.value = hoursValue.toFixed(2);
+      laborHoursField.style.background = '#d1fae5'; // Light green highlight
+
+      // Clear highlight after 2 seconds
+      setTimeout(() => {
+        laborHoursField.style.background = '';
+      }, 2000);
+
+      showStatus(`✓ Hours set to ${hoursValue} (${result.transcription || result.raw_transcription})`, 'success');
+
+      // Clear the input and return early
+      jobNotesTextarea.value = '';
+      return;
+    }
+
+    // Check for "sign timecard" command
+    if (transcription.includes('sign') && (transcription.includes('timecard') || transcription.includes('time card'))) {
+      const signatureCanvas = document.getElementById('signatureCanvas');
+      if (signatureCanvas) {
+        signatureCanvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        signatureCanvas.style.borderColor = '#3b82f6';
+        signatureCanvas.style.borderWidth = '3px';
+
+        setTimeout(() => {
+          signatureCanvas.style.borderColor = '#d1d5db';
+          signatureCanvas.style.borderWidth = '2px';
+        }, 2000);
+
+        showStatus('✓ Signature canvas focused', 'success');
+        jobNotesTextarea.value = '';
+        return;
+      }
+    }
+  }
+
   // Handle conversational messages (chat responses)
   if (result.message_type === 'conversational' && result.response) {
     // Show chat section
@@ -3323,14 +3411,37 @@ async function submitFinalRepairs() {
   }
 
   try {
-    showStatus('Submitting final repairs...', 'info');
+    // Get timecard fields
+    const techName = document.getElementById('techName')?.value;
+    const workDate = document.getElementById('workDate')?.value;
+    const laborHours = document.getElementById('laborHours')?.value;
+    const signatureData = document.getElementById('signatureData')?.value;
 
-    // Get labor hours and tech signature from form
-    const laborHoursInput = document.getElementById('laborHours');
-    const techSignatureInput = document.getElementById('techSignature');
+    // Validate timecard fields
+    if (!techName) {
+      showStatus('Please select a technician', 'error');
+      document.getElementById('techName')?.focus();
+      return;
+    }
 
-    const laborHours = laborHoursInput && laborHoursInput.value ? parseFloat(laborHoursInput.value) : null;
-    const techSignature = techSignatureInput && techSignatureInput.value ? techSignatureInput.value.trim() : null;
+    if (!workDate) {
+      showStatus('Please select work date', 'error');
+      document.getElementById('workDate')?.focus();
+      return;
+    }
+
+    if (!laborHours || parseFloat(laborHours) <= 0) {
+      showStatus('Please enter hours worked (must be greater than 0)', 'error');
+      document.getElementById('laborHours')?.focus();
+      return;
+    }
+
+    if (!signatureData) {
+      showStatus('Please sign to certify your hours', 'error');
+      return;
+    }
+
+    showStatus('Submitting job & time card...', 'info');
 
     const response = await fetch('/api/submit-repairs', {
       method: 'POST',
@@ -3339,8 +3450,10 @@ async function submitFinalRepairs() {
       },
       body: JSON.stringify({
         repairs: currentRepairs,
-        labor_hours: laborHours,
-        tech_signature: techSignature
+        tech_name: techName,
+        work_date: workDate,
+        labor_hours: parseFloat(laborHours),
+        signature_base64: signatureData
       })
     });
 
@@ -3350,12 +3463,21 @@ async function submitFinalRepairs() {
 
     const result = await response.json();
 
-    showStatus(`Successfully submitted ${currentRepairs.length} repair(s)!`, 'success');
+    showStatus(`✓ Job & time card submitted! (${laborHours} hrs for ${techName})`, 'success');
     console.log('Submitted repairs:', result);
 
-    // Optionally clear the form
-    // currentRepairs = [];
-    // renderRepairs();
+    // Clear form after successful submit
+    document.getElementById('jobNotes').value = '';
+    document.getElementById('laborHours').value = '';
+    document.getElementById('techName').value = '';
+    const canvas = document.getElementById('signatureCanvas');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    document.getElementById('signatureData').value = '';
+    currentRepairs = [];
+    renderRepairs();
 
   } catch (error) {
     console.error('Error submitting repairs:', error);
@@ -4572,5 +4694,99 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (showRepairsBtn) {
     showRepairsBtn.addEventListener('click', () => toggleView('repairs'));
+  }
+});
+
+// ============================================================================
+// SIGNATURE CANVAS & TIME TRACKING
+// ============================================================================
+
+document.addEventListener('DOMContentLoaded', () => {
+  const canvas = document.getElementById('signatureCanvas');
+  const clearBtn = document.getElementById('clearSignature');
+  const dateInput = document.getElementById('workDate');
+
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  let drawing = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  // Set today's date as default
+  if (dateInput) {
+    const today = new Date().toISOString().split('T')[0];
+    dateInput.value = today;
+  }
+
+  // Canvas drawing setup
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    if (e.touches && e.touches[0]) {
+      return {
+        x: (e.touches[0].clientX - rect.left) * scaleX,
+        y: (e.touches[0].clientY - rect.top) * scaleY
+      };
+    }
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
+  }
+
+  function startDrawing(e) {
+    drawing = true;
+    const pos = getPos(e);
+    lastX = pos.x;
+    lastY = pos.y;
+    e.preventDefault();
+  }
+
+  function draw(e) {
+    if (!drawing) return;
+    e.preventDefault();
+
+    const pos = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+
+    lastX = pos.x;
+    lastY = pos.y;
+
+    // Store signature data
+    document.getElementById('signatureData').value = canvas.toDataURL('image/png');
+  }
+
+  function stopDrawing() {
+    drawing = false;
+  }
+
+  // Mouse events
+  canvas.addEventListener('mousedown', startDrawing);
+  canvas.addEventListener('mousemove', draw);
+  canvas.addEventListener('mouseup', stopDrawing);
+  canvas.addEventListener('mouseout', stopDrawing);
+
+  // Touch events (mobile)
+  canvas.addEventListener('touchstart', startDrawing);
+  canvas.addEventListener('touchmove', draw);
+  canvas.addEventListener('touchend', stopDrawing);
+
+  // Clear signature
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      document.getElementById('signatureData').value = '';
+    });
   }
 });
