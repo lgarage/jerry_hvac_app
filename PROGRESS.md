@@ -1,24 +1,39 @@
 # Jerry HVAC - Session Progress Tracker
 
-**Last Updated:** November 2, 2025 (Session continued)
+**Last Updated:** November 3, 2025 (New session - transcript tracking feature)
 **Current Phase:** Phase 1 MVP (50% complete - 3/6 items)
-**Session Focus:** Wired parts parsing to jobs database + added progress tracking
+**Session Focus:** Voice transcript linking, unit grouping & timestamp tracking
 
 ---
 
 ## 🎯 Where We Are Right Now
 
-### Just Completed (This Session)
+### Just Completed (This Session - Nov 3)
+- ✅ **Transcript tracking database schema** - Migration 006 adds transcripts JSONB + session_context
+- ✅ **Transcript API endpoints** - 6 new endpoints for transcript CRUD operations (server.js:1811-2051)
+- ✅ **Timestamp utilities** - formatTimestamp.js for relative/absolute time display
+- ✅ **Unit extraction utilities** - extractUnits.js for parsing RTU-6, AHU-2, etc from text
+- ✅ **Database functions** - 5 PostgreSQL functions for transcript management
+
+### Previous Session (Nov 2)
 - ✅ **Wired parts to jobs** - `/api/submit-repairs` now creates job records with `parts_used` JSONB
 - ✅ **Job number format** - Changed to 0001NRP (sequential + location + type)
 - ✅ **CSV import fixes** - Fixed PostgreSQL type inference errors, added drag-and-drop
 - ✅ **Progress tracking** - Added auto-update instructions to CLAUDE.md (lines 203-259)
 - ✅ **Documentation cleanup** - Deleted PROJECT_STATUS.md to avoid duplication
 
+### In Progress (Transcript Feature)
+- ⏳ **Frontend integration** - Wire transcript API to voice recording flow
+- ⏳ **UnitCard component** - Group repairs by equipment in single card
+- ⏳ **TranscriptDrawer component** - Show full transcript history with timestamps
+- ⏳ **Session context tracking** - Track "lastMentionedUnit" for follow-up commands
+
 ### Ready to Test
-- [ ] Voice record: "RTU-1 needs 2 filters and 4 pounds R-410A"
-- [ ] Submit repair
-- [ ] Verify job created in database with parts_used array
+- [ ] Run migration 006 (needs .env with DATABASE_URL)
+- [ ] Voice record: "RTU-6 needs 2 filters and 4 AA batteries"
+- [ ] Verify transcript saved with ISO8601 timestamp
+- [ ] Test multi-unit: "RTU-6 and RTU-2 both need filters"
+- [ ] Test follow-up: "oh and add batteries to that" (should apply to last unit)
 
 ---
 
@@ -111,36 +126,52 @@
 
 ---
 
-## 📝 Last Session Notes (Nov 2, 8am - continued)
+## 📝 Last Session Notes (Nov 3 - Voice Transcript Feature)
 
-**Completed:**
-- Modified `/api/submit-repairs` endpoint (server.js lines 1713-1801)
-- Each repair creates one job with auto-generated number
+**Completed (Phase 1 - Backend Foundation):**
+
+1. **Database Migration (migrations/006_add_transcript_tracking.sql)**
+   - Added `transcripts` JSONB column to jobs table
+   - Added `session_context` JSONB for tracking lastMentionedUnit
+   - Created 5 PostgreSQL functions:
+     * `add_transcript_to_job()` - stores transcript with ISO8601 timestamp
+     * `get_job_transcripts()` - retrieves all transcripts chronologically
+     * `get_unit_transcripts()` - filters transcripts by unit (RTU-6, etc)
+     * `get_job_units()` - returns all units mentioned with statistics
+     * `update_session_context()` - tracks lastMentionedUnit for follow-ups
+   - Added GIN indexes for fast JSONB queries
+
+2. **API Endpoints (server.js:1811-2051)**
+   - `POST /api/jobs/:jobNumber/transcripts` - Add transcript to job
+   - `GET /api/jobs/:jobNumber/transcripts` - Get all transcripts (sortable ASC/DESC)
+   - `GET /api/jobs/:jobNumber/transcripts/unit/:unitName` - Filter by unit
+   - `GET /api/jobs/:jobNumber/units` - Get units with mention counts
+   - `GET /api/jobs/:jobNumber/session-context` - Get current session state
+   - `PUT /api/jobs/:jobNumber/session-context` - Update lastMentionedUnit
+
+3. **Utility Functions (src/utils/)**
+   - **formatTimestamp.js** - Timestamp display utilities
+     * `formatTimestamp()` - "2 hours ago" or "Oct 15, 2025 at 2:30 PM"
+     * `formatTimestampShort()` - "2m", "3h", "2d" for compact displays
+     * `groupByDate()` - group transcripts by date
+     * `getDateGroupLabel()` - "Today", "Yesterday", weekday names
+   - **extractUnits.js** - Unit identifier extraction
+     * `extractUnits()` - parse "RTU-6", "AHU-2" from text
+     * `groupRepairsByUnit()` - consolidate repairs by equipment
+     * `normalizeUnitId()` - convert "rtu6" → "RTU-6"
+
+**Next Steps (Phase 2 - Frontend Integration):**
+1. Wire transcript API to voice recording flow
+2. Store transcript on mic release (before parsing)
+3. Build UnitCard component (group repairs by equipment)
+4. Build TranscriptDrawer component (full history with timestamps)
+5. Add session context tracking for follow-up commands
+
+**Previous Session (Nov 2):**
+- Modified `/api/submit-repairs` endpoint to create job records
 - Parts formatted and saved to `jobs.parts_used` JSONB field
-- Job type determined by repair.actions (repair vs service)
-- Status set to 'completed' (repairs already done when submitted)
-- Defaults to customer_id=1 (Planet Fitness)
-- Added progress tracking section to CLAUDE.md (lines 203-259)
-- Deleted PROJECT_STATUS.md to keep PROGRESS.md as single source of truth
-
-**Code Changes:**
-```javascript
-// Each repair creates a job with parts
-const partsUsed = repair.parts.map(part => ({
-  name: part.name,
-  quantity: part.quantity,
-  unit: part.unit,
-  category: part.category,
-  matched: part.matched
-}));
-
-const job = await sql`INSERT INTO jobs (...) VALUES (...)`;
-// Returns: {job_number: "0001NRP", parts_used: [...]}
-```
-
-**Documentation Changes:**
-- CLAUDE.md now includes auto-reminder to update PROGRESS.md at session end
-- Ensures context is maintained across sessions without needing to ask "what should I work on?"
+- Job number format: 0001NRP (sequential + location + type)
+- Added progress tracking to CLAUDE.md
 
 **Testing TODO:**
 1. Restart server: `npm start`
