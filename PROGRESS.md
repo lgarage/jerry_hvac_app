@@ -1,9 +1,9 @@
 # Jerry HVAC - Session Progress Tracker
 
-**Last Updated:** November 3, 2025
+**Last Updated:** November 4, 2025
 **Current Phase:** Phase 1 - MVP Foundation
 **Phase Progress:** 50% complete (3/6 verified, 1 awaiting test) 🧪
-**Session Focus:** Labor hours + signature code complete, needs user testing
+**Session Focus:** Complete timecard system with repair checklist (BREAKING CHANGE - replaced old implementation)
 
 ---
 
@@ -33,38 +33,115 @@
 
 ## 🎯 Where We Are Right Now
 
-### Just Completed (This Session - Nov 3)
-- 🧪 **PHASE 1 ITEM #6: Labor Hours + Signature** - Code complete, **AWAITING USER TEST**
-  - **Frontend (public/index.html:1104-1178):**
-    * Tech dropdown with 8 hardcoded names (Steve Chew, Mike Johnson, etc.)
-    * Date field defaulting to today
-    * Hours input with 0.25 increments (min 0.25, max 24)
-    * HTML5 signature canvas (600x150px, touch + mouse support)
-    * Clear signature button
-  - **Signature Canvas (public/app.js:4578-4670):**
-    * Touch event support for mobile
-    * Mouse event support for desktop
-    * Stores base64 PNG in hidden field
-    * Clear functionality
-  - **Validation (public/app.js:3319-3398):**
-    * Requires tech selection
-    * Requires date
-    * Requires hours > 0
-    * Requires signature (canvas not empty)
-    * Focus on first invalid field
-  - **Voice Commands (public/app.js:1788-1874):**
-    * "I worked 4 hours" → auto-fills 4.0
-    * "worked 2 and a half hours" → auto-fills 2.5
-    * "4 and a quarter hours" → auto-fills 4.25
-    * "4 point 5 hours" → auto-fills 4.5
-    * "Sign timecard" → scrolls to and highlights signature canvas
-    * Green highlight effect on successful fill
-  - **Backend (server.js:1895-1985):**
-    * Accepts tech_name, work_date, labor_hours, signature_base64
-    * Stores signature as base64 PNG in tech_signature column
-    * Stores timecard metadata in JSONB (tech_name, work_date, signature_timestamp)
-    * Validation for complete timecard data
-  - **USER: Please test before marking complete!**
+### Just Completed (This Session - Nov 4) 🚨 BREAKING CHANGE
+
+- 🧪 **PHASE 1 ITEM #6: Complete Timecard System** - Code complete, **AWAITING USER TEST**
+
+  **⚠️ BREAKING CHANGE:** Replaced old time tracking with proper workflow matching real HVAC operations
+
+  **What Was Wrong:**
+  - ❌ Voice "I worked 4 hours" didn't ask for tech name
+  - ❌ No visual confirmation that timecard was saved
+  - ❌ Hours duplicated across every equipment repair (wrong!)
+  - ❌ No way to track which repairs completed vs incomplete
+  - ❌ Didn't match real workflow (one timecard per job visit)
+
+  **What's Fixed:**
+  - ✅ **One timecard per job** (not per equipment)
+  - ✅ **Repair checklist** shows completion progress with checkboxes
+  - ✅ **Status auto-detected** from checklist (all checked = complete)
+  - ✅ **Voice command opens modal** and prompts for tech name
+  - ✅ **Visual confirmation** displays all timecard details
+  - ✅ **Hours tied to specific job number**
+
+  **1. Database Schema (migrations/007_create_timecards_table.sql):**
+  - Created `timecards` table with:
+    * job_number (FK to jobs.job_number)
+    * tech_name, work_date, hours_worked, status, signature_base64
+    * repairs_completed JSONB (tracks checkbox states per equipment/part)
+    * notes (optional)
+  - PostgreSQL functions:
+    * get_job_timecard_summary() - total hours/visits per job
+    * get_tech_hours() - tech hours for date range
+    * update_timecard_timestamp() - auto-update trigger
+  - Indexes for fast job/tech/status queries
+
+  **2. Repair Checklist UI (public/index.html:1104-1134):**
+  - Auto-generates from documented repairs
+  - Checkboxes for each part/repair item
+  - Completion badges (per-equipment and overall)
+  - "Mark All Complete" bulk action
+  - "Ready to Log Time" opens timecard modal
+
+  **3. Timecard Modal (public/index.html:1415-1532):**
+  - Job info display (job#, location)
+  - Tech dropdown (8 hardcoded names)
+  - Date field (defaults to today)
+  - Hours input (0.25 increments, 0.25-24 range)
+  - Status radio buttons (auto-detected from checklist):
+    * Complete (all boxes checked)
+    * Incomplete (some unchecked)
+  - Signature canvas (520x150px, touch + mouse support)
+  - Optional notes field
+  - Full validation before submit
+
+  **4. Repair Checklist Logic (public/app.js:2966-3149):**
+  - generateRepairChecklist() - builds from currentRepairs array
+  - Groups parts by equipment
+  - Tracks checkbox state in repairChecklistState object
+  - updateChecklistCompletionBadges() - live progress tracking
+  - markAllChecksComplete() - bulk check action
+  - Per-equipment completion counters
+
+  **5. Timecard Modal Logic (public/app.js:3151-3421):**
+  - openTimecardModal() - auto-detects status from checklist
+  - initTimecardSignatureCanvas() - proper canvas event setup
+  - submitTimecard() - validates, builds repairs_completed JSONB, calls API
+  - showTimecardConfirmation() - displays success with all details
+  - Auto-hides confirmation after 10 seconds
+
+  **6. Voice Command Integration (public/app.js:1787-1871):**
+  - "I worked 4 hours" → opens modal, pre-fills hours field
+  - "worked 2 and a half hours" → converts to 2.5
+  - "4 and a quarter hours" → 4.25
+  - "4 point 5 hours" → 4.5
+  - Checks if repairs exist first (prevents empty timecards)
+  - Focuses tech name field if not selected
+  - Shows helpful prompts: "Hours set to 4. Please select technician."
+
+  **7. Backend API (server.js:2017-2200):**
+  - POST /api/submit-repairs-with-timecard
+  - Creates job records (one per repair)
+  - Creates ONE timecard linked to first job number
+  - Stores repairs_completed JSONB with checkbox states
+  - Validates: tech_name, work_date, hours_worked, status, signature
+  - Returns jobs + timecard data for confirmation display
+  - Comprehensive logging for debugging
+
+  **8. Migration Runner (run-migration-007.js):**
+  - Ready to execute: `node run-migration-007.js`
+  - Verifies table creation
+  - Lists created columns and functions
+  - Safe error handling
+
+  **The Correct Workflow:**
+  1. Tech documents repairs → Repairs parsed and displayed
+  2. System generates repair checklist with checkboxes
+  3. Tech checks boxes as repairs are completed
+  4. Tech says "I worked 4 hours" (voice command)
+  5. System opens timecard modal with pre-filled hours
+  6. System auto-detects status based on checked boxes
+  7. System prompts for tech name (if not selected)
+  8. Tech signs canvas → Submits
+  9. System creates ONE timecard for the job
+  10. Visual confirmation shows: Job#, tech, hours, date, status, repairs completed
+
+  **USER: MUST run migration first, then test!**
+  ```bash
+  node run-migration-007.js  # Creates timecards table
+  npm start                   # Start server
+  # Then test the complete workflow
+  ```
 - ✅ **Phase management system** - Scalable phase checking in CLAUDE.md, auto-defer to backlogs
 - ✅ **Filter inventory seed** - 36 filters imported into parts table
 - ✅ **Database connection fixed** - Supabase connection working with pooler
@@ -95,46 +172,115 @@
 
 ### 🧪 Ready for User Testing (CRITICAL - Phase 1 Item #6)
 
-**Item #6: Labor Hours + Signature**
+**Item #6: Complete Timecard System with Repair Checklist**
 **Status:** Code complete, needs user verification before marking ✅
 
-**Test Steps:**
-1. Start server: `npm start` (on your local machine)
-2. Go to: `http://localhost:3000`
-3. Enter some job notes (type or voice record)
-4. Click "Parse Notes" to see repairs
-5. Scroll to **"⏱️ Time Card Entry"** section at bottom
-6. **NEW FIELDS TEST:**
-   - Select a technician from dropdown (e.g., "Steve Chew")
-   - Date should auto-fill with today's date
-   - Enter labor hours (e.g., "2.5" or "4.25")
-   - Sign in the signature canvas (draw with mouse or touch)
-7. **VOICE COMMAND TEST (Optional):**
-   - Record voice: "I worked 4 hours"
-   - Should auto-fill hours field with 4.0 and show green highlight
-   - Try: "worked 2 and a half hours" → should fill 2.5
-   - Try: "Sign timecard" → should scroll to and highlight canvas
-8. Click "Submit Job & Time Card"
-9. **Verify:** Success message shows with hours and tech name
-10. **Database Check (Optional):**
+**⚠️ BREAKING CHANGE:** Old time tracking replaced. New workflow matches real HVAC operations.
+
+**Pre-Test Setup (REQUIRED):**
+```bash
+# 1. Run database migration to create timecards table
+node run-migration-007.js
+
+# Expected output:
+# ✓ Migration 007 completed successfully
+# Timecards table columns: id, job_number, tech_name, work_date, hours_worked, status, signature_base64, notes, repairs_completed, created_at, updated_at
+# Created functions: get_job_timecard_summary(), get_tech_hours(), update_timecard_timestamp()
+
+# 2. Start server
+npm start
+```
+
+**Test Scenario 1: Complete Job (All Repairs Done)**
+1. Go to: `http://localhost:3000`
+2. Document repairs (voice or text):
+   - Example: "RTU-6 needs 20x25x1 filters and a contactor. RTU-1 needs a capacitor."
+3. Click "Parse Notes"
+4. **NEW: Repair Checklist appears** ✨
+   - Should show equipment groups (RTU-6, RTU-1)
+   - Each part has a checkbox
+   - Completion badges show "0/3 completed"
+5. **Check all boxes** (mark all repairs complete)
+   - Manually check each box OR
+   - Click "Mark All Complete" button
+   - Completion badge should turn green: "3/3 completed"
+6. **Voice command:** Say "I worked 4 hours"
+   - Timecard modal should open
+   - Hours field pre-filled with "4.00" (green highlight)
+   - Status auto-selected: "Complete" (all boxes checked)
+   - Hint says: "All repairs checked (3/3)"
+7. **Fill timecard:**
+   - Select tech: "Steve Chew"
+   - Date: Today (auto-filled)
+   - Sign canvas (draw signature)
+   - Optionally add notes
+8. Click "Submit Timecard"
+9. **Visual confirmation should appear:** ✨
+   - Job number (e.g., "0042NRP")
+   - Location: Planet Fitness
+   - Tech: Steve Chew
+   - Hours: 4.0
+   - Date: Nov 4, 2025
+   - Status: ✓ Complete
+   - Repairs: 3/3 completed
+   - Signed: ✓
+10. **Verify in database:**
     ```sql
-    SELECT job_number, labor_hours, tech_signature, metadata
-    FROM jobs ORDER BY created_at DESC LIMIT 1;
+    SELECT * FROM timecards ORDER BY created_at DESC LIMIT 1;
+    -- Should show: job_number, tech_name='Steve Chew', hours_worked=4.0, status='complete', signature_base64 (long string), repairs_completed JSONB
+
+    SELECT * FROM jobs ORDER BY created_at DESC LIMIT 3;
+    -- Should show 3 jobs (one per repair), all with status='complete'
     ```
-    - `labor_hours` should show your entered value (e.g., 2.5)
-    - `tech_signature` should show base64 PNG string starting with "data:image/png;base64,"
-    - `metadata` should show timecard info with tech_name and work_date
 
-**Expected Result:**
-- ✅ Form validates all required fields before submit
-- ✅ Voice commands auto-fill hours field
-- ✅ Signature canvas works on both mouse and touch
-- ✅ Success message shows hours and tech name
-- ✅ Database stores all timecard fields correctly
+**Test Scenario 2: Incomplete Job (Some Repairs Not Done)**
+1. Document new repairs: "RTU-6 needs filters and belts. AHU-2 needs batteries."
+2. Parse notes → Checklist shows 3 items
+3. **Check only 2 boxes** (leave one unchecked)
+   - Completion: "2/3 completed"
+4. Voice: "I worked 2 and a half hours"
+5. Modal opens:
+   - Hours: 2.50
+   - Status auto-selected: **"Incomplete"** (some unchecked) ✨
+   - Hint says: "2/3 repairs checked"
+6. Fill tech, sign, submit
+7. **Verify:**
+   - Database: `status='incomplete'`
+   - Jobs table: `status='incomplete'`
+   - repairs_completed JSONB shows which boxes checked/unchecked
 
-**If successful:** Comment "Item #6 tested and working" and I'll mark it ✅ complete
+**Test Scenario 3: Voice Command Edge Cases**
+- "I worked 4 hours" → Opens modal, hours = 4.00
+- "worked 2 and a quarter hours" → hours = 2.25
+- "I worked 3 point 5 hours" → hours = 3.50
+- Say "I worked 4 hours" WITHOUT documenting repairs first:
+  - Should show error: "Please document repairs first before logging hours"
 
-**If issues:** Report what broke and I'll fix it immediately
+**Test Scenario 4: Validation**
+Try to submit timecard without:
+- Tech name → Error: "Please select a technician"
+- Hours → Error: "Please enter hours worked (must be greater than 0)"
+- Signature → Error: "Please sign to certify your hours"
+
+**Expected Results:**
+- ✅ Repair checklist auto-generates from documented repairs
+- ✅ Checkboxes track completion progress
+- ✅ Completion badges update in real-time
+- ✅ Voice "I worked X hours" opens modal with pre-filled hours
+- ✅ Status auto-detected based on checkboxes (complete vs incomplete)
+- ✅ Modal prompts for tech name if not selected
+- ✅ Signature canvas works (touch + mouse)
+- ✅ Visual confirmation displays all timecard details
+- ✅ ONE timecard created per job (not duplicated per equipment)
+- ✅ Database stores: job_number, tech, hours, status, signature, repairs_completed JSONB
+
+**If successful:** Comment "Item #6 tested and working" and I'll mark it ✅ complete (67% Phase 1 done!)
+
+**If issues:** Report:
+1. What step failed
+2. Error messages (console or screen)
+3. Expected vs actual behavior
+And I'll fix immediately!
 
 ---
 
