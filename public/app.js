@@ -1788,11 +1788,11 @@ function displayResults(result) {
   // ============================================================================
   // VOICE COMMAND: HOURS ENTRY
   // Parse phrases like "I worked 4 hours" or "worked 2 and a half hours"
+  // Opens timecard modal with pre-filled hours
   // ============================================================================
   const transcription = (result.transcription || result.raw_transcription || '').toLowerCase();
-  const laborHoursField = document.getElementById('laborHours');
 
-  if (laborHoursField && transcription) {
+  if (transcription) {
     // Pattern 1: "I worked X hours" / "worked X hours"
     const hoursPattern1 = /(?:i\s+)?worked\s+(\d+(?:\.\d+)?)\s+(?:and\s+a\s+)?(?:half\s+)?hours?/i;
     const match1 = transcription.match(hoursPattern1);
@@ -1804,10 +1804,6 @@ function displayResults(result) {
     // Pattern 3: "X point X hours" (e.g., "4 point 5 hours")
     const hoursPattern3 = /(\d+)\s+point\s+(\d+)\s+hours?/i;
     const match3 = transcription.match(hoursPattern3);
-
-    // Pattern 4: Simple "X hours"
-    const hoursPattern4 = /^(\d+(?:\.\d+)?)\s+hours?$/i;
-    const match4 = transcription.match(hoursPattern4);
 
     let hoursValue = null;
 
@@ -1830,46 +1826,47 @@ function displayResults(result) {
     } else if (match3) {
       // Convert "4 point 5" to 4.5
       hoursValue = parseFloat(match3[1] + '.' + match3[2]);
-    } else if (match4) {
-      hoursValue = parseFloat(match4[1]);
     }
 
-    // If we found a valid hours value, populate the field
+    // If we found a valid hours value, open timecard modal
     if (hoursValue !== null && hoursValue > 0 && hoursValue <= 24) {
       // Round to nearest 0.25 increment
       hoursValue = Math.round(hoursValue * 4) / 4;
-      laborHoursField.value = hoursValue.toFixed(2);
-      laborHoursField.style.background = '#d1fae5'; // Light green highlight
 
-      // Clear highlight after 2 seconds
-      setTimeout(() => {
-        laborHoursField.style.background = '';
-      }, 2000);
-
-      showStatus(`✓ Hours set to ${hoursValue} (${result.transcription || result.raw_transcription})`, 'success');
-
-      // Clear the input and return early
-      jobNotesTextarea.value = '';
-      return;
-    }
-
-    // Check for "sign timecard" command
-    if (transcription.includes('sign') && (transcription.includes('timecard') || transcription.includes('time card'))) {
-      const signatureCanvas = document.getElementById('signatureCanvas');
-      if (signatureCanvas) {
-        signatureCanvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        signatureCanvas.style.borderColor = '#3b82f6';
-        signatureCanvas.style.borderWidth = '3px';
-
-        setTimeout(() => {
-          signatureCanvas.style.borderColor = '#d1d5db';
-          signatureCanvas.style.borderWidth = '2px';
-        }, 2000);
-
-        showStatus('✓ Signature canvas focused', 'success');
+      // Check if checklist exists
+      if (currentRepairs.length === 0) {
+        showStatus('Please document repairs first before logging hours', 'error');
         jobNotesTextarea.value = '';
         return;
       }
+
+      // Open timecard modal with pre-filled hours
+      openTimecardModal();
+
+      // Pre-fill hours field
+      setTimeout(() => {
+        const hoursField = document.getElementById('timecardLaborHours');
+        if (hoursField) {
+          hoursField.value = hoursValue.toFixed(2);
+          hoursField.style.background = '#d1fae5'; // Light green highlight
+
+          setTimeout(() => {
+            hoursField.style.background = '';
+          }, 2000);
+        }
+
+        // Focus on tech name field if not selected
+        const techNameField = document.getElementById('timecardTechName');
+        if (techNameField && !techNameField.value) {
+          techNameField.focus();
+          showStatus(`Hours set to ${hoursValue}. Please select technician.`, 'info');
+        } else {
+          showStatus(`Hours set to ${hoursValue}. Please sign timecard.`, 'info');
+        }
+      }, 100);
+
+      jobNotesTextarea.value = '';
+      return;
     }
   }
 
@@ -2958,6 +2955,466 @@ async function renderRepairs() {
     submitFinalBtn.addEventListener('click', submitFinalRepairs);
     repairGrid.appendChild(submitFinalBtn);
   }
+
+  // After rendering repairs, generate the checklist
+  generateRepairChecklist();
+}
+
+// ============================================================================
+// REPAIR CHECKLIST & TIMECARD SYSTEM
+// ============================================================================
+
+let repairChecklistState = {}; // Tracks checkbox states: { "repairIndex_partIndex": true/false }
+
+function generateRepairChecklist() {
+  const checklistSection = document.getElementById('repairChecklistSection');
+  const checklistGrid = document.getElementById('repairChecklistGrid');
+  const completionBadge = document.getElementById('checklistCompletionBadge');
+
+  if (currentRepairs.length === 0) {
+    checklistSection.classList.add('hidden');
+    return;
+  }
+
+  // Show checklist section
+  checklistSection.classList.remove('hidden');
+
+  // Clear existing checklist
+  checklistGrid.innerHTML = '';
+  repairChecklistState = {};
+
+  let totalItems = 0;
+  let completedItems = 0;
+
+  // Generate checklist items grouped by equipment
+  currentRepairs.forEach((repair, repairIndex) => {
+    const equipmentCard = document.createElement('div');
+    equipmentCard.style.cssText = 'border: 2px solid #e5e7eb; border-radius: 8px; padding: 16px; background: #f9fafb;';
+
+    // Equipment header
+    const equipmentHeader = document.createElement('div');
+    equipmentHeader.style.cssText = 'font-weight: 600; color: #374151; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;';
+    equipmentHeader.innerHTML = `
+      <span>${repair.equipment || `Repair ${repairIndex + 1}`}</span>
+      <span class="equipment-completion-badge" data-repair-index="${repairIndex}" style="font-size: 0.8rem; padding: 2px 8px; border-radius: 8px; background: #e5e7eb; color: #6b7280;">0/0</span>
+    `;
+    equipmentCard.appendChild(equipmentHeader);
+
+    // Problem description
+    if (repair.problem) {
+      const problemDiv = document.createElement('div');
+      problemDiv.style.cssText = 'font-size: 0.9rem; color: #6b7280; margin-bottom: 12px; font-style: italic;';
+      problemDiv.textContent = repair.problem;
+      equipmentCard.appendChild(problemDiv);
+    }
+
+    // Parts checklist
+    if (repair.parts && repair.parts.length > 0) {
+      repair.parts.forEach((part, partIndex) => {
+        const checkboxId = `checkbox_${repairIndex}_${partIndex}`;
+        const partName = typeof part === 'string' ? part : (part.name || part.lookupKey || 'Part');
+
+        const checkboxDiv = document.createElement('label');
+        checkboxDiv.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 8px; cursor: pointer; border-radius: 6px; transition: background 0.2s;';
+        checkboxDiv.onmouseover = () => checkboxDiv.style.background = '#ffffff';
+        checkboxDiv.onmouseout = () => {
+          if (!repairChecklistState[checkboxId]) {
+            checkboxDiv.style.background = 'transparent';
+          }
+        };
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = checkboxId;
+        checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer;';
+        checkbox.addEventListener('change', (e) => {
+          repairChecklistState[checkboxId] = e.target.checked;
+          if (e.target.checked) {
+            checkboxDiv.style.background = '#d1fae5';
+          } else {
+            checkboxDiv.style.background = 'transparent';
+          }
+          updateChecklistCompletionBadges();
+        });
+
+        const label = document.createElement('span');
+        label.style.cssText = 'flex: 1; font-size: 0.95rem; color: #374151;';
+        label.textContent = partName;
+
+        checkboxDiv.appendChild(checkbox);
+        checkboxDiv.appendChild(label);
+        equipmentCard.appendChild(checkboxDiv);
+
+        totalItems++;
+        repairChecklistState[checkboxId] = false;
+      });
+    } else {
+      // No parts, just show the repair as a single checklist item
+      const checkboxId = `checkbox_${repairIndex}_repair`;
+      const checkboxDiv = document.createElement('label');
+      checkboxDiv.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 8px; cursor: pointer; border-radius: 6px; transition: background 0.2s;';
+      checkboxDiv.onmouseover = () => checkboxDiv.style.background = '#ffffff';
+      checkboxDiv.onmouseout = () => {
+        if (!repairChecklistState[checkboxId]) {
+          checkboxDiv.style.background = 'transparent';
+        }
+      };
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.id = checkboxId;
+      checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer;';
+      checkbox.addEventListener('change', (e) => {
+        repairChecklistState[checkboxId] = e.target.checked;
+        if (e.target.checked) {
+          checkboxDiv.style.background = '#d1fae5';
+        } else {
+          checkboxDiv.style.background = 'transparent';
+        }
+        updateChecklistCompletionBadges();
+      });
+
+      const label = document.createElement('span');
+      label.style.cssText = 'flex: 1; font-size: 0.95rem; color: #374151;';
+      label.textContent = repair.problem || 'Complete this repair';
+
+      checkboxDiv.appendChild(checkbox);
+      checkboxDiv.appendChild(label);
+      equipmentCard.appendChild(checkboxDiv);
+
+      totalItems++;
+      repairChecklistState[checkboxId] = false;
+    }
+
+    checklistGrid.appendChild(equipmentCard);
+  });
+
+  // Update completion badge
+  completionBadge.textContent = `${completedItems}/${totalItems} completed`;
+
+  // Wire up buttons
+  document.getElementById('markAllCompleteBtn').onclick = markAllChecksComplete;
+  document.getElementById('readyToLogTimeBtn').onclick = openTimecardModal;
+}
+
+function updateChecklistCompletionBadges() {
+  const totalChecks = Object.keys(repairChecklistState).length;
+  const completedChecks = Object.values(repairChecklistState).filter(v => v).length;
+
+  // Update main badge
+  const completionBadge = document.getElementById('checklistCompletionBadge');
+  completionBadge.textContent = `${completedChecks}/${totalChecks} completed`;
+
+  if (completedChecks === totalChecks && totalChecks > 0) {
+    completionBadge.style.background = '#d1fae5';
+    completionBadge.style.color = '#065f46';
+  } else {
+    completionBadge.style.background = '#f3f4f6';
+    completionBadge.style.color = '#6b7280';
+  }
+
+  // Update per-equipment badges
+  currentRepairs.forEach((repair, repairIndex) => {
+    const equipmentBadge = document.querySelector(`[data-repair-index="${repairIndex}"]`);
+    if (!equipmentBadge) return;
+
+    const repairChecks = Object.keys(repairChecklistState).filter(k => k.startsWith(`checkbox_${repairIndex}_`));
+    const repairCompleted = repairChecks.filter(k => repairChecklistState[k]).length;
+    equipmentBadge.textContent = `${repairCompleted}/${repairChecks.length}`;
+
+    if (repairCompleted === repairChecks.length && repairChecks.length > 0) {
+      equipmentBadge.style.background = '#d1fae5';
+      equipmentBadge.style.color = '#065f46';
+    } else {
+      equipmentBadge.style.background = '#e5e7eb';
+      equipmentBadge.style.color = '#6b7280';
+    }
+  });
+}
+
+function markAllChecksComplete() {
+  Object.keys(repairChecklistState).forEach(key => {
+    repairChecklistState[key] = true;
+    const checkbox = document.getElementById(key);
+    if (checkbox) {
+      checkbox.checked = true;
+      checkbox.parentElement.style.background = '#d1fae5';
+    }
+  });
+  updateChecklistCompletionBadges();
+  showStatus('✓ All repairs marked complete', 'success');
+}
+
+// ============================================================================
+// TIMECARD MODAL FUNCTIONS
+// ============================================================================
+
+function openTimecardModal() {
+  const modal = document.getElementById('timecardModal');
+  modal.classList.remove('hidden');
+
+  // Set today's date
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('timecardWorkDate').value = today;
+
+  // Auto-detect status based on checklist completion
+  const totalChecks = Object.keys(repairChecklistState).length;
+  const completedChecks = Object.values(repairChecklistState).filter(v => v).length;
+
+  const allComplete = completedChecks === totalChecks && totalChecks > 0;
+  document.getElementById('statusComplete').checked = allComplete;
+  document.getElementById('statusIncomplete').checked = !allComplete;
+
+  const statusHint = document.getElementById('statusHint');
+  if (allComplete) {
+    statusHint.textContent = `All repairs checked (${completedChecks}/${totalChecks})`;
+    statusHint.style.color = '#065f46';
+  } else {
+    statusHint.textContent = `${completedChecks}/${totalChecks} repairs checked`;
+    statusHint.style.color = '#d97706';
+  }
+
+  // Set job info (we'll generate the job number when submitting)
+  document.getElementById('timecardJobNumber').textContent = 'Will be generated on submit';
+  document.getElementById('timecardLocation').textContent = 'Planet Fitness'; // TODO: Get from context
+
+  // Initialize signature canvas
+  initTimecardSignatureCanvas();
+
+  // Wire up close button
+  document.getElementById('closeTimecardModal').onclick = closeTimecardModal;
+  document.getElementById('submitTimecardBtn').onclick = submitTimecard;
+}
+
+function closeTimecardModal() {
+  const modal = document.getElementById('timecardModal');
+  modal.classList.add('hidden');
+}
+
+let timecardSignatureDrawing = false;
+let timecardSignatureLastX = 0;
+let timecardSignatureLastY = 0;
+
+function initTimecardSignatureCanvas() {
+  const canvas = document.getElementById('timecardSignatureCanvas');
+  const clearBtn = document.getElementById('clearTimecardSignature');
+
+  if (!canvas || !canvas.getContext) return;
+
+  const ctx = canvas.getContext('2d');
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    if (e.touches && e.touches[0]) {
+      return {
+        x: (e.touches[0].clientX - rect.left) * scaleX,
+        y: (e.touches[0].clientY - rect.top) * scaleY
+      };
+    }
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
+  }
+
+  function startDrawing(e) {
+    timecardSignatureDrawing = true;
+    const pos = getPos(e);
+    timecardSignatureLastX = pos.x;
+    timecardSignatureLastY = pos.y;
+    e.preventDefault();
+  }
+
+  function draw(e) {
+    if (!timecardSignatureDrawing) return;
+    e.preventDefault();
+
+    const pos = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(timecardSignatureLastX, timecardSignatureLastY);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+
+    timecardSignatureLastX = pos.x;
+    timecardSignatureLastY = pos.y;
+
+    // Store signature data
+    document.getElementById('timecardSignatureData').value = canvas.toDataURL('image/png');
+  }
+
+  function stopDrawing() {
+    timecardSignatureDrawing = false;
+  }
+
+  // Remove old event listeners (if any) by cloning
+  const newCanvas = canvas.cloneNode(true);
+  canvas.parentNode.replaceChild(newCanvas, canvas);
+
+  // Get fresh reference
+  const freshCanvas = document.getElementById('timecardSignatureCanvas');
+  const freshCtx = freshCanvas.getContext('2d');
+  freshCtx.strokeStyle = '#000';
+  freshCtx.lineWidth = 2;
+  freshCtx.lineCap = 'round';
+  freshCtx.lineJoin = 'round';
+
+  // Add event listeners
+  freshCanvas.addEventListener('mousedown', startDrawing);
+  freshCanvas.addEventListener('mousemove', draw);
+  freshCanvas.addEventListener('mouseup', stopDrawing);
+  freshCanvas.addEventListener('mouseout', stopDrawing);
+  freshCanvas.addEventListener('touchstart', startDrawing);
+  freshCanvas.addEventListener('touchmove', draw);
+  freshCanvas.addEventListener('touchend', stopDrawing);
+
+  // Clear button
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      freshCtx.clearRect(0, 0, freshCanvas.width, freshCanvas.height);
+      document.getElementById('timecardSignatureData').value = '';
+    };
+  }
+}
+
+async function submitTimecard() {
+  try {
+    // Get form values
+    const techName = document.getElementById('timecardTechName').value;
+    const workDate = document.getElementById('timecardWorkDate').value;
+    const laborHours = document.getElementById('timecardLaborHours').value;
+    const signatureData = document.getElementById('timecardSignatureData').value;
+    const status = document.querySelector('input[name="timecardStatus"]:checked').value;
+    const notes = document.getElementById('timecardNotes').value;
+
+    // Validation
+    if (!techName) {
+      showStatus('Please select a technician', 'error');
+      document.getElementById('timecardTechName').focus();
+      return;
+    }
+
+    if (!workDate) {
+      showStatus('Please select work date', 'error');
+      document.getElementById('timecardWorkDate').focus();
+      return;
+    }
+
+    if (!laborHours || parseFloat(laborHours) <= 0) {
+      showStatus('Please enter hours worked (must be greater than 0)', 'error');
+      document.getElementById('timecardLaborHours').focus();
+      return;
+    }
+
+    if (!signatureData) {
+      showStatus('Please sign to certify your hours', 'error');
+      return;
+    }
+
+    // Build repairs_completed JSONB from checklist state
+    const repairsCompleted = {};
+    currentRepairs.forEach((repair, repairIndex) => {
+      const equipmentName = repair.equipment || `Repair ${repairIndex + 1}`;
+      repairsCompleted[equipmentName] = {};
+
+      if (repair.parts && repair.parts.length > 0) {
+        repair.parts.forEach((part, partIndex) => {
+          const checkboxId = `checkbox_${repairIndex}_${partIndex}`;
+          const partName = typeof part === 'string' ? part : (part.name || part.lookupKey || 'Part');
+          repairsCompleted[equipmentName][partName] = repairChecklistState[checkboxId] || false;
+        });
+      } else {
+        const checkboxId = `checkbox_${repairIndex}_repair`;
+        repairsCompleted[equipmentName]['repair'] = repairChecklistState[checkboxId] || false;
+      }
+    });
+
+    // Show loading
+    const submitBtn = document.getElementById('submitTimecardBtn');
+    const submitText = document.getElementById('submitTimecardText');
+    submitBtn.disabled = true;
+    submitText.textContent = 'Submitting...';
+
+    // Submit to backend
+    const response = await fetch('/api/submit-repairs-with-timecard', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        repairs: currentRepairs,
+        timecard: {
+          tech_name: techName,
+          work_date: workDate,
+          hours_worked: parseFloat(laborHours),
+          status: status,
+          signature_base64: signatureData,
+          notes: notes,
+          repairs_completed: repairsCompleted
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to submit timecard');
+    }
+
+    const result = await response.json();
+
+    // Close modal
+    closeTimecardModal();
+
+    // Show confirmation
+    showTimecardConfirmation(result);
+
+    // Clear form and checklist
+    currentRepairs = [];
+    renderRepairs();
+    document.getElementById('jobNotes').value = '';
+
+    showStatus(`✓ Job & timecard saved! (${laborHours} hrs for ${techName})`, 'success');
+
+  } catch (error) {
+    console.error('Error submitting timecard:', error);
+    showStatus(`Error: ${error.message}`, 'error');
+  } finally {
+    const submitBtn = document.getElementById('submitTimecardBtn');
+    const submitText = document.getElementById('submitTimecardText');
+    submitBtn.disabled = false;
+    submitText.textContent = 'Submit Timecard';
+  }
+}
+
+function showTimecardConfirmation(result) {
+  const confirmationDiv = document.getElementById('timecardConfirmation');
+  const detailsDiv = document.getElementById('timecardDetails');
+
+  const timecard = result.timecard;
+  const jobs = result.jobs || [];
+
+  detailsDiv.innerHTML = `
+    <div style="margin-bottom: 8px;"><strong>Job Number:</strong> ${timecard.job_number || jobs[0]?.job_number || 'N/A'}</div>
+    <div style="margin-bottom: 8px;"><strong>Location:</strong> Planet Fitness</div>
+    <div style="margin-bottom: 8px;"><strong>Tech:</strong> ${timecard.tech_name}</div>
+    <div style="margin-bottom: 8px;"><strong>Hours:</strong> ${timecard.hours_worked}</div>
+    <div style="margin-bottom: 8px;"><strong>Date:</strong> ${new Date(timecard.work_date).toLocaleDateString()}</div>
+    <div style="margin-bottom: 8px;"><strong>Status:</strong> ${timecard.status === 'complete' ? '✓ Complete' : '⏳ Incomplete'}</div>
+    <div style="margin-bottom: 8px;"><strong>Repairs:</strong> ${Object.values(repairChecklistState).filter(v => v).length}/${Object.keys(repairChecklistState).length} completed</div>
+    <div><strong>Signed:</strong> ✓</div>
+  `;
+
+  confirmationDiv.classList.remove('hidden');
+
+  // Hide after 10 seconds
+  setTimeout(() => {
+    confirmationDiv.classList.add('hidden');
+  }, 10000);
 }
 
 async function checkPartsInDatabase() {

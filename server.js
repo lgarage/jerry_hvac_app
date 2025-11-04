@@ -2014,6 +2014,191 @@ app.post('/api/submit-repairs', async (req, res) => {
   }
 });
 
+// ============================================================================
+// TIMECARD SUBMISSION ENDPOINT
+// ============================================================================
+
+/**
+ * POST /api/submit-repairs-with-timecard
+ * Submit repairs and create a timecard entry
+ *
+ * This endpoint:
+ * 1. Creates job records from repairs
+ * 2. Creates ONE timecard entry linked to the first job number
+ * 3. Stores repair checklist state in repairs_completed JSONB
+ *
+ * Request body:
+ * {
+ *   "repairs": [...],
+ *   "timecard": {
+ *     "tech_name": "Steve Chew",
+ *     "work_date": "2025-11-04",
+ *     "hours_worked": 4.0,
+ *     "status": "complete",
+ *     "signature_base64": "data:image/png;base64,...",
+ *     "notes": "Optional notes",
+ *     "repairs_completed": {
+ *       "RTU-6": {
+ *         "filters_20x25x1": true,
+ *         "contactor": true
+ *       }
+ *     }
+ *   }
+ * }
+ */
+app.post('/api/submit-repairs-with-timecard', async (req, res) => {
+  try {
+    const { repairs, timecard } = req.body;
+
+    if (!repairs || !Array.isArray(repairs) || repairs.length === 0) {
+      return res.status(400).json({ error: 'Invalid repairs data' });
+    }
+
+    if (!timecard) {
+      return res.status(400).json({ error: 'Timecard data required' });
+    }
+
+    // Validate timecard fields
+    const requiredFields = ['tech_name', 'work_date', 'hours_worked', 'status', 'signature_base64'];
+    for (const field of requiredFields) {
+      if (!timecard[field]) {
+        return res.status(400).json({ error: `Timecard missing required field: ${field}` });
+      }
+    }
+
+    // Validate status
+    if (!['complete', 'incomplete'].includes(timecard.status)) {
+      return res.status(400).json({ error: 'Status must be "complete" or "incomplete"' });
+    }
+
+    // Default to customer_id 1 (Planet Fitness)
+    const defaultCustomerId = 1;
+
+    const createdJobs = [];
+
+    console.log(`\n=== CREATING JOBS WITH TIMECARD ===`);
+    console.log(`Customer ID: ${defaultCustomerId}`);
+    console.log(`Total Repairs: ${repairs.length}`);
+    console.log(`Tech: ${timecard.tech_name}`);
+    console.log(`Hours: ${timecard.hours_worked}`);
+    console.log(`Status: ${timecard.status}`);
+    console.log(`Date: ${timecard.work_date}`);
+
+    // Create jobs for each repair
+    for (const repair of repairs) {
+      try {
+        const jobType = repair.actions && repair.actions.length > 0 ? 'repair' : 'service';
+
+        // Format parts for database
+        const partsUsed = (repair.parts || []).map(part => ({
+          name: part.name || part.lookupKey || part,
+          quantity: part.quantity || 1,
+          unit: part.unit || null,
+          category: part.category || null,
+          matched: part.matched || false,
+          match_confidence: part.match_confidence || null
+        }));
+
+        // Create job record
+        const job = await sql`
+          INSERT INTO jobs (
+            customer_id,
+            equipment_id,
+            job_type,
+            status,
+            problem_description,
+            tech_notes,
+            parts_used,
+            location_code
+          ) VALUES (
+            ${defaultCustomerId},
+            ${null},
+            ${jobType},
+            ${timecard.status},
+            ${repair.problem || 'Service call'},
+            ${repair.notes || repair.raw_transcription || ''},
+            ${JSON.stringify(partsUsed)},
+            ${'N'}
+          )
+          RETURNING *
+        `;
+
+        createdJobs.push(job[0]);
+
+        console.log(`✓ Created job ${job[0].job_number} for equipment: ${repair.equipment || 'Unknown'}`);
+        console.log(`  Parts: ${partsUsed.map(p => `${p.quantity} ${p.name}`).join(', ')}`);
+
+      } catch (repairError) {
+        console.error(`Error creating job for repair:`, repairError);
+        // Continue with other repairs even if one fails
+      }
+    }
+
+    if (createdJobs.length === 0) {
+      return res.status(500).json({ error: 'Failed to create any jobs' });
+    }
+
+    // Create timecard entry linked to the first job number
+    const primaryJobNumber = createdJobs[0].job_number;
+
+    const timecardResult = await sql`
+      INSERT INTO timecards (
+        job_number,
+        tech_name,
+        work_date,
+        hours_worked,
+        status,
+        signature_base64,
+        notes,
+        repairs_completed
+      ) VALUES (
+        ${primaryJobNumber},
+        ${timecard.tech_name},
+        ${timecard.work_date},
+        ${timecard.hours_worked},
+        ${timecard.status},
+        ${timecard.signature_base64},
+        ${timecard.notes || null},
+        ${JSON.stringify(timecard.repairs_completed || {})}
+      )
+      RETURNING *
+    `;
+
+    const createdTimecard = timecardResult[0];
+
+    console.log(`✓ Created timecard for job ${primaryJobNumber}`);
+    console.log(`  Tech: ${createdTimecard.tech_name}`);
+    console.log(`  Hours: ${createdTimecard.hours_worked}`);
+    console.log(`  Status: ${createdTimecard.status}`);
+    console.log(`========================\n`);
+
+    res.json({
+      success: true,
+      jobsCreated: createdJobs.length,
+      jobs: createdJobs.map(j => ({
+        job_number: j.job_number,
+        job_type: j.job_type,
+        status: j.status,
+        parts_count: JSON.parse(j.parts_used || '[]').length
+      })),
+      timecard: {
+        id: createdTimecard.id,
+        job_number: createdTimecard.job_number,
+        tech_name: createdTimecard.tech_name,
+        work_date: createdTimecard.work_date,
+        hours_worked: createdTimecard.hours_worked,
+        status: createdTimecard.status,
+        created_at: createdTimecard.created_at
+      },
+      message: `Successfully created ${createdJobs.length} job(s) and timecard`
+    });
+
+  } catch (error) {
+    console.error('Error submitting repairs with timecard:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Optional: Get all submitted repairs
 app.get('/api/submissions', (req, res) => {
   res.json({
