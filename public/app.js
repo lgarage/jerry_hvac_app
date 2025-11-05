@@ -1345,6 +1345,15 @@ floatingMic.addEventListener('touchend', (e) => {
 });
 
 submitBtn.addEventListener('click', handleSubmit);
+
+// Allow Enter key to submit job notes (Shift+Enter for new line)
+jobNotesTextarea.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    handleSubmit();
+  }
+});
+
 closeModal.addEventListener('click', () => hidePartsModal());
 partsModal.addEventListener('click', (e) => {
   if (e.target === partsModal) hidePartsModal();
